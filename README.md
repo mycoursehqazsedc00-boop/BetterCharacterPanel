@@ -23,10 +23,11 @@ Every optional feature checks for the function it needs when it runs. If the mod
 | Enchant not in BCP's database | Shows a generic "Enchanted" / "Temp Ench" | Shows the enchant's real name from the client's own data (ClassicAPI), shortened to 24 characters. Falls back to the generic text if ClassicAPI is missing |
 | Weapon oils, stones, poisons | Name only | Adds remaining time and charges, for example `(12m, 3x)`. Turns red under 2 minutes. Refreshes every second while the panel is open. Character panel only (ClassicAPI) |
 | Durability | Not shown | Percentage on damaged slots, coloured green to red. Character panel only (ClassicAPI) |
-| Gear summary | None | Hover the character model: average item level, plus average durability, lowest slot and estimated repair cost on your own panel. On the inspect panel it shows average item level only |
+| Gear score | Not shown | Total gear score in the model-hover tooltip, plus a per-item score line on every equipped item's own tooltip (character and inspect panels). Ported from S_ItemTip's `ItemSocre.lua` formula (a Turtle-tuned Shagu GearScore variant), so the numbers match what that addon already reports. Uses Nampower for item level and quality; no extra client mod required |
+| Gear summary | None | Hover the character model: average item level, gear score, plus average durability, lowest slot and estimated repair cost on your own panel. On the inspect panel it shows average item level and gear score only |
 | Gear export | None | `/bcp export` and `/bcp export target` write a text file (SuperWoW) |
 | `/bcp` | Opens the config | Opens the config. `export` arguments are handled first |
-| Config window | Existing sections | New **Client Mod Extras** section with three checkboxes: durability, timers, gear tooltip |
+| Config window | Existing sections | New **Client Mod Extras** section with four checkboxes: durability, timers, gear tooltip, item score in tooltips |
 | Facetted Crystal Scope | Not in the database | Added as enchant ID **450**, "+2% Crit.", for Bow, Gun and Crossbow, in all seven languages |
 
 ### Notes on the new features
@@ -41,6 +42,15 @@ Every optional feature checks for the function it needs when it runs. If the mod
 Enchant ID 450 was read from the game with `GetEquippedItem("player",18).permanentEnchantId`. The in-game description of the scope's spell (36945) says it attaches a permanent scope to a bow or gun that increases crit chance by 2%. The description names bows and guns only; crossbow is included here because the enchant is on a crossbow in practice, and it only affects the missing-enchant check.
 
 The +2% appears as text on the ranged slot. It is **not** added into any crit number, because the addon does not calculate crit. Better Character Stats calculates crit itself by reading item tooltips, and this scope adds no tooltip line, so Better Character Stats does not count it.
+
+### Gear score
+
+The formula (`BetterCharacterPanel-gearscore.lua`) is ported as-is from S_ItemTip's `ItemSocre.lua`, itself a Turtle-tuned version of the classic Shagu GearScore addon — the same per-slot weights, the same class/weapon-type coefficients for main hand, off hand and ranged, and the same `(total / 17) * 1.355` normalization. Nothing about the scoring math was invented for this fork; only where the numbers come from changed:
+
+- **Item level and quality** come from Nampower's `GetItemStatsField`, which reads the item-stats data directly and isn't affected by the "item not cached yet" gap that stock `GetItemInfo` has. This makes item level and quality reliable even for an inspect target's gear you've never seen before.
+- **Two-handed weapon detection** (for the main-hand coefficient) still uses stock `GetItemInfo`, exactly as the original formula does. On an inspect target's weapon you've never seen, this can briefly assume one-handed until something else warms the client's item cache — a minor, self-correcting inaccuracy, not a missing feature. It self-corrects on your next panel refresh.
+- **Total score** shows in the model-hover gear tooltip, next to average item level.
+- **Per-item score** is added as an extra line on every equipped item's own tooltip (both panels), by pre-hooking `GameTooltip.SetInventoryItem` — the same technique `ItemSocre.lua` itself uses, kept as its own toggle since it's a busier addition than a single hover-tooltip line.
 
 ## Installation
 
