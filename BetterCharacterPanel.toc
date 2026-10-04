@@ -20,6 +20,7 @@ BetterCharacterPanel-dbenchants.lua
 BetterCharacterPanel-lib.lua
 BetterCharacterPanel-config.lua
 BetterCharacterPanel-clientmods.lua
+BetterCharacterPanel-gearscore.lua
 
 # Paperdoll Skins
 skins\paperdoll\BetterCharacterPanel-paperdoll-Vanilla.lua
