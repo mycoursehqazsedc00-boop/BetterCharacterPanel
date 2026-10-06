@@ -31,6 +31,7 @@ local BCP_CONFIG_DEFAULTS = {
         DurabilityOnSlots = true,
         TempEnchantTimers = true,
         GearTooltip = true,
+        ItemScore = true,
     },
     InspectPanel = {
         EnchantFontScale = 1.0,
@@ -690,6 +691,8 @@ local function BCP_CreateConfigFrame()
         "TempEnchantTimers", CFG_INDENT, y)
     y = BCP_AddCheckbox(content, "CmTooltip", BCP_CONFIG_CM_TOOLTIP, BCP_CONFIG_CM_TOOLTIP_TT, "ClientMods",
         "GearTooltip", CFG_INDENT, y)
+    y = BCP_AddCheckbox(content, "CmItemScore", BCP_CONFIG_CM_ITEMSCORE, BCP_CONFIG_CM_ITEMSCORE_TT, "ClientMods",
+        "ItemScore", CFG_INDENT, y)
     y = y - 4
 
     -- Stat Panel

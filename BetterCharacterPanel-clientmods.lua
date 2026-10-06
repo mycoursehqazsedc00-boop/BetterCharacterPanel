@@ -28,7 +28,12 @@ BCP_CONFIG_CM_TIMERS_TT = BCP_CONFIG_CM_TIMERS_TT or
     "Adds the remaining time (and charges) to weapon oils, stones and poisons. Character panel only. Requires ClassicAPI."
 BCP_CONFIG_CM_TOOLTIP = BCP_CONFIG_CM_TOOLTIP or "Show Gear Summary Tooltip"
 BCP_CONFIG_CM_TOOLTIP_TT = BCP_CONFIG_CM_TOOLTIP_TT or
-    "Hover the character model to see average item level, average durability and the estimated repair cost."
+    "Hover the character model to see average item level, gear score, average durability and the estimated repair cost."
+BCP_CONFIG_CM_ITEMSCORE = BCP_CONFIG_CM_ITEMSCORE or "Show Item Score In Tooltips"
+BCP_CONFIG_CM_ITEMSCORE_TT = BCP_CONFIG_CM_ITEMSCORE_TT or
+    "Adds this item's gear score contribution to its own tooltip, on any equipped item (character or inspect panel)."
+BCP_CM_ITEM_SCORE = BCP_CM_ITEM_SCORE or "Item Score"
+BCP_CM_GEAR_SCORE = BCP_CM_GEAR_SCORE or "Gear Score"
 BCP_CM_GEAR_SUMMARY = BCP_CM_GEAR_SUMMARY or "Gear Summary"
 BCP_CM_AVG_ILVL = BCP_CM_AVG_ILVL or "Average item level"
 BCP_CM_AVG_DURABILITY = BCP_CM_AVG_DURABILITY or "Average durability"
@@ -390,6 +395,14 @@ function M:ShowGearTooltip(frame, unit)
 
     if ok and avg then
         GameTooltip:AddDoubleLine(BCP_CM_AVG_ILVL, string.format("%.1f", avg), 1, 1, 1, 1, 1, 1)
+    end
+
+    if BCPGearScore then
+        local okScore, gearScore = pcall(BCPGearScore.GetTotalScore, BCPGearScore, unit)
+
+        if okScore and gearScore then
+            GameTooltip:AddDoubleLine(BCP_CM_GEAR_SCORE, string.format("%.1f", gearScore), 1, 1, 1, 1, 1, 1)
+        end
     end
 
     if unit == "player" then

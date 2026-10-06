@@ -9,14 +9,11 @@
 -- same numbers players already see from that addon rather than a made-up
 -- alternative.
 --
--- Item level and quality come from Nampower's GetItemStatsField, which
--- reads the item-stats DBC directly and isn't affected by the "item not
--- cached yet" gap that stock GetItemInfo has. Weapon-type detection (for
--- the 1H/2H mainhand coefficient) still uses stock GetItemInfo, exactly as
--- the original formula does, so on an inspect target's weapon you've never
--- seen before it can briefly guess 1H until something else warms the
--- client's item cache -- a minor, self-correcting inaccuracy, not a
--- missing feature.
+-- Item level comes from Nampower's GetItemLevel (via BCPLib, already used
+-- elsewhere in this addon), which reads item-stats data directly and isn't
+-- affected by the "item not cached yet" gap that stock GetItemInfo has.
+-- Quality and weapon-type detection use stock GetItemInfo instead -- see
+-- the comment on GetSlotScore for why.
 
 BCPGearScore = BCPGearScore or {}
 local GS = BCPGearScore
@@ -87,6 +84,16 @@ end
 -- Returns this slot's contribution to gear score, plus the item level and
 -- quality it was computed from (for display), or nil if the slot is empty
 -- or its data isn't available (e.g. an other-faction inspect target).
+--
+-- Quality and two-handed detection both come from stock GetItemInfo (the
+-- same source the original ItemSocre.lua formula uses for quality), rather
+-- than Nampower's GetItemStatsField -- unlike GetEquippedItem and
+-- GetItemLevel (both already proven by the average-item-level feature
+-- above), GetItemStatsField's "quality" field was never actually confirmed
+-- against a live client, and silently returning nil here would mean no
+-- score ever showing at all. GetItemInfo carries the usual "not cached
+-- yet" caveat, but for your own already-equipped gear that's almost always
+-- a non-issue since the client has already seen it.
 function GS:GetSlotScore(unit, slotId)
 	local okItem, item = pcall(GetEquippedItem, unit, slotId)
 
@@ -95,19 +102,13 @@ function GS:GetSlotScore(unit, slotId)
 	end
 
 	local itemLevel = BCPLib:GetItemLevelFromEquipmentSlot(unit, slotId)
-	local okQuality, quality = pcall(GetItemStatsField, item.itemId, "quality")
+	local okInfo, _, _, quality, _, _, _, _, _, equipSlot = pcall(GetItemInfo, item.itemId)
 
-	if not itemLevel or not okQuality or quality == nil then
+	if not itemLevel or not okInfo or quality == nil then
 		return nil
 	end
 
-	local isTwoHand = false
-
-	if slotId == 16 then
-		local okInfo, _, _, _, _, _, _, _, _, equipSlot = pcall(GetItemInfo, item.itemId)
-
-		isTwoHand = okInfo and equipSlot == "INVTYPE_2HWEAPON"
-	end
+	local isTwoHand = slotId == 16 and equipSlot == "INVTYPE_2HWEAPON"
 
 	local coef = self:GetSlotCoefficient(slotId, unit, isTwoHand)
 	local base = self:CalculateItemScore(quality, itemLevel)

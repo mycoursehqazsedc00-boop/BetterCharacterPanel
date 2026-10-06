@@ -475,7 +475,15 @@ function BCP_BuildScrollContent(skin, contentFrame, scrollFrame, scrollBar, bcsC
             contentFrame:SetHeight(maxH)
         else
             contentFrame:SetWidth(contentW)
-            contentFrame:SetHeight(yOffset - 45)
+            -- Was "yOffset - 45": an unexplained fixed subtraction not
+            -- present in the equivalent native (non-BCS) branch below, which
+            -- uses the same yOffset accumulation with no adjustment at all.
+            -- The scrollbar's max scroll range is computed directly from
+            -- this height, so under-reporting it meant some bottom rows of
+            -- the last card(s) were permanently unreachable, not just
+            -- visually cramped -- worse with fewer categories enabled, since
+            -- 45px is a larger fraction of a short total height.
+            contentFrame:SetHeight(yOffset)
 
             if BCP_IS_USING_PFUI and BCPPFUIUnifiedBackdrop and BCPPFUIUnifiedBackdrop.backdrop and infoFrame then
                 BCPPFUIUnifiedBackdrop.backdrop:SetPoint("BOTTOMRIGHT", -30 + infoFrame:GetWidth() + 5, 72)
