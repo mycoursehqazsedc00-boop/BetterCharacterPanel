@@ -120,6 +120,79 @@ function GS:GetSlotScore(unit, slotId)
 	return base * coef, itemLevel, quality
 end
 
+-- Maps GetItemInfo's equipLoc enum to the slot numbering used above, so an
+-- item that ISN'T currently equipped (a bag or bank item) can still be
+-- scored the same way. Ambiguous one-handers (INVTYPE_WEAPON, usable in
+-- either hand) are scored as main hand, since that's the more heavily
+-- weighted of the two for non-Hunters and there's no way to know which
+-- hand a bag item would end up in. INVTYPE_RANGEDRIGHT covers Wands, Guns
+-- and Crossbows on this (pre-2.4.3) client -- INVTYPE_RANGED alone is only
+-- Bows. INVTYPE_RELIC (Idols/Totems/Librams) occupies the same physical
+-- slot as a ranged weapon in vanilla.
+local EQUIP_LOC_TO_SLOT = {
+	INVTYPE_HEAD = 1,
+	INVTYPE_NECK = 2,
+	INVTYPE_SHOULDER = 3,
+	INVTYPE_CHEST = 5,
+	INVTYPE_ROBE = 5,
+	INVTYPE_WAIST = 6,
+	INVTYPE_LEGS = 7,
+	INVTYPE_FEET = 8,
+	INVTYPE_WRIST = 9,
+	INVTYPE_HAND = 10,
+	INVTYPE_FINGER = 11,
+	INVTYPE_TRINKET = 13,
+	INVTYPE_CLOAK = 15,
+	INVTYPE_WEAPON = 16,
+	INVTYPE_2HWEAPON = 16,
+	INVTYPE_WEAPONMAINHAND = 16,
+	INVTYPE_WEAPONOFFHAND = 17,
+	INVTYPE_SHIELD = 17,
+	INVTYPE_HOLDABLE = 17,
+	INVTYPE_RANGED = 18,
+	INVTYPE_RANGEDRIGHT = 18,
+	INVTYPE_THROWN = 18,
+	INVTYPE_RELIC = 18,
+}
+
+-- Scores an arbitrary item by link or numeric ID -- doesn't need to be
+-- equipped, so this works for bag and bank items too. "unit" decides whose
+-- class is used for the weapon-slot coefficient (almost always "player",
+-- since a bag item belongs to you regardless of who you're looking at).
+-- Returns the same (score, itemLevel, quality) shape as GetSlotScore, or
+-- nil if the item's data isn't available (e.g. not cached yet) or it's not
+-- an equippable item at all (consumables, quest items, etc. have no
+-- equipLoc and are correctly skipped here).
+function GS:GetItemLinkScore(itemLink, unit)
+	if not itemLink then
+		return nil
+	end
+
+	unit = unit or "player"
+
+	local okInfo, _, _, quality, itemLevel, _, _, _, _, equipSlot = pcall(GetItemInfo, itemLink)
+
+	if not okInfo or quality == nil or not equipSlot or equipSlot == "" then
+		return nil
+	end
+
+	local slotId = EQUIP_LOC_TO_SLOT[equipSlot]
+
+	if not slotId then
+		return nil
+	end
+
+	local isTwoHand = slotId == 16 and equipSlot == "INVTYPE_2HWEAPON"
+	local coef = self:GetSlotCoefficient(slotId, unit, isTwoHand)
+	local base = self:CalculateItemScore(quality, itemLevel)
+
+	if not base then
+		return nil
+	end
+
+	return base * coef, itemLevel, quality
+end
+
 -- Total gear score for a unit, or nil if nothing could be scored at all
 -- (e.g. no gear data available for that unit).
 function GS:GetTotalScore(unit)
@@ -155,17 +228,7 @@ local function IsBCPTrackedSlot(slotId)
 	return false
 end
 
-local function AddItemScoreLine(unit, slotId)
-	if not (BCPConfig and BCPConfig.ClientMods and BCPConfig.ClientMods.ItemScore) then
-		return
-	end
-
-	if not IsBCPTrackedSlot(slotId) then
-		return
-	end
-
-	local score = GS:GetSlotScore(unit, slotId)
-
+local function ShowItemScoreLine(score)
 	if not score then
 		return
 	end
@@ -175,19 +238,72 @@ local function AddItemScoreLine(unit, slotId)
 	GameTooltip:Show()
 end
 
--- SetInventoryItem is only used for an item actually equipped in a unit's
--- slot (bags/bank/mail use their own Set*Item calls), so this only ever
--- touches equipped-gear tooltips, which is exactly what gear score is
--- about. Pre-hooked so any addon's earlier hook still runs first. The
--- return value must be passed through unchanged: SetInventoryItem returns
--- true/false depending on whether the slot has an item, and callers use
--- that to decide whether to keep the tooltip shown at all.
+local function AddItemScoreLine(unit, slotId)
+	if not (BCPConfig and BCPConfig.ClientMods and BCPConfig.ClientMods.ItemScore) then
+		return
+	end
+
+	if not IsBCPTrackedSlot(slotId) then
+		return
+	end
+
+	ShowItemScoreLine(GS:GetSlotScore(unit, slotId))
+end
+
+-- For an item that isn't equipped -- a bag or bank item -- scored by link
+-- instead of by slot, via GetItemLinkScore.
+local function AddItemScoreLineForLink(itemLink)
+	if not (BCPConfig and BCPConfig.ClientMods and BCPConfig.ClientMods.ItemScore) then
+		return
+	end
+
+	if not itemLink then
+		return
+	end
+
+	local okScore, score = pcall(GS.GetItemLinkScore, GS, itemLink)
+
+	ShowItemScoreLine(okScore and score or nil)
+end
+
+-- SetInventoryItem covers both equipped gear (BCP_SLOTS, slot IDs 1-18)
+-- and the bank's own main grid, which on this client is also shown via
+-- SetInventoryItem with slot IDs outside that range. Pre-hooked so any
+-- addon's earlier hook still runs first. The return value must be passed
+-- through unchanged: SetInventoryItem returns true/false depending on
+-- whether the slot has an item, and callers use that to decide whether to
+-- keep the tooltip shown at all.
 local previousSetInventoryItem = GameTooltip.SetInventoryItem
 
 GameTooltip.SetInventoryItem = function(self, unit, slotId)
 	local hasItem = previousSetInventoryItem(self, unit, slotId)
 
-	AddItemScoreLine(unit, slotId)
+	if IsBCPTrackedSlot(slotId) then
+		AddItemScoreLine(unit, slotId)
+	elseif hasItem then
+		local okLink, link = pcall(GetInventoryItemLink, unit, slotId)
+
+		AddItemScoreLineForLink(okLink and link or nil)
+	end
 
 	return hasItem
+end
+
+-- Bag items (backpack, bags 0-4) and items inside purchased bank bag slots
+-- both go through SetBagItem. The bank's own 24-slot main grid does not --
+-- see the SetInventoryItem hook above. SetBagItem's own return values
+-- (cooldown/repair-cost info) are preserved through unchanged, same
+-- reasoning as SetInventoryItem above.
+local previousSetBagItem = GameTooltip.SetBagItem
+
+if previousSetBagItem then
+	GameTooltip.SetBagItem = function(self, bag, slot)
+		local r1, r2, r3 = previousSetBagItem(self, bag, slot)
+
+		local okLink, link = pcall(GetContainerItemLink, bag, slot)
+
+		AddItemScoreLineForLink(okLink and link or nil)
+
+		return r1, r2, r3
+	end
 end
