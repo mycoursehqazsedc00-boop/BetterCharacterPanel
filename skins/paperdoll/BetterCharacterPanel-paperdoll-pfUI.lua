@@ -100,6 +100,10 @@ local origBgR, origBgG, origBgB, origBgA
 local origClosePoint, origCloseRelTo, origCloseRelPoint, origCloseX, origCloseY
 
 local function SaveOriginals()
+    if not CharacterFrame or not CharacterFrame.backdrop or not CharacterFrameCloseButton then
+        return
+    end
+
     origBorderR, origBorderG, origBorderB, origBorderA =
         CharacterFrame.backdrop:GetBackdropBorderColor()
     origBgR, origBgG, origBgB, origBgA =
@@ -111,12 +115,21 @@ local function SaveOriginals()
 end
 
 local function RestoreOriginals()
-    CharacterFrameCloseButton:ClearAllPoints()
-    CharacterFrameCloseButton:SetPoint(origClosePoint, origCloseRelTo,
-        origCloseRelPoint, origCloseX, origCloseY)
-    CharacterFrame.backdrop:SetBackdropBorderColor(origBorderR, origBorderG,
-        origBorderB, origBorderA)
-    CharacterFrame.backdrop:SetBackdropColor(origBgR, origBgG, origBgB, origBgA)
+    if not originalFrameSaved then
+        return
+    end
+
+    if CharacterFrameCloseButton and origClosePoint then
+        CharacterFrameCloseButton:ClearAllPoints()
+        CharacterFrameCloseButton:SetPoint(origClosePoint, origCloseRelTo,
+            origCloseRelPoint, origCloseX, origCloseY)
+    end
+
+    if CharacterFrame and CharacterFrame.backdrop then
+        CharacterFrame.backdrop:SetBackdropBorderColor(origBorderR, origBorderG,
+            origBorderB, origBorderA)
+        CharacterFrame.backdrop:SetBackdropColor(origBgR, origBgG, origBgB, origBgA)
+    end
 
     if BCPPFUIUnifiedBackdrop then
         BCPPFUIUnifiedBackdrop:Hide()
@@ -124,6 +137,10 @@ local function RestoreOriginals()
 end
 
 local function SetCustomPositionCloseButton()
+    if not CharacterFrameCloseButton or not BCPPFUIUnifiedBackdrop or not BCPPFUIUnifiedBackdrop.backdrop then
+        return
+    end
+
     CharacterFrameCloseButton:ClearAllPoints()
     CharacterFrameCloseButton:SetPoint("TOPRIGHT",
         BCPPFUIUnifiedBackdrop.backdrop, "TOPRIGHT", -4, -4)
@@ -141,7 +158,7 @@ local function ChangeFrameValues()
         if BCPPFUIUnifiedBackdrop then
             BCPPFUIUnifiedBackdrop:Show()
         end
-    else
+    elseif originalFrameSaved then
         RestoreOriginals()
     end
 end
@@ -212,7 +229,7 @@ end
 function skin:OnPaperDollShow()
     local cfg = self.Config
 
-    if not originalFrameSaved then
+    if not originalFrameSaved and CharacterFrame and CharacterFrame.backdrop and CharacterFrameCloseButton then
         SaveOriginals()
     end
 
@@ -236,8 +253,8 @@ function skin:OnPaperDollShow()
 
         if not BCPPFUICharacterInformationFrame then
             local infoFrame = CreateFrame("Frame", "BCPPFUICharacterInformationFrame", PaperDollFrame)
-            infoFrame:SetPoint("LEFT", cfg.InfoFrameXOffset, cfg.InfoFrameYOffset)
-            infoFrame:SetHeight(PaperDollFrame:GetHeight() + 19 - cfg.InfoFrameHeightPadding)
+            infoFrame:SetPoint("TOPLEFT", PaperDollFrame, "TOPLEFT", cfg.InfoFrameXOffset, -10)
+            infoFrame:SetPoint("BOTTOMLEFT", PaperDollFrame, "BOTTOMLEFT", cfg.InfoFrameXOffset, 72)
             infoFrame:EnableMouse(true)
             infoFrame:RegisterForDrag("LeftButton")
             infoFrame:SetScript("OnDragStart", function()
@@ -275,6 +292,9 @@ function skin:OnPaperDollShow()
         end
 
         BCPPFUIUnifiedBackdrop.backdrop:SetPoint("BOTTOMRIGHT", -30 + BCPPFUICharacterInformationFrame:GetWidth() + 5, 72)
+        if PanelTemplates_GetSelectedTab(CharacterFrame) == 1 then
+            SetCustomPositionCloseButton()
+        end
     end
 
     ChangeFrameValues()

@@ -188,8 +188,8 @@ function skin:OnPaperDollShow()
 
         if not BCPVanillaCharacterInformationFrame then
             local infoFrame = CreateFrame("Frame", "BCPVanillaCharacterInformationFrame", PaperDollFrame)
-            infoFrame:SetPoint("LEFT", cfg.InfoFrameXOffset, cfg.InfoFrameYOffset)
-            infoFrame:SetHeight(PaperDollFrame:GetHeight() - cfg.InfoFrameHeightPadding)
+            infoFrame:SetPoint("TOPLEFT", PaperDollFrame, "TOPLEFT", cfg.InfoFrameXOffset, -12)
+            infoFrame:SetPoint("BOTTOMLEFT", PaperDollFrame, "BOTTOMLEFT", cfg.InfoFrameXOffset, 74)
             infoFrame:SetBackdrop({
                 bgFile = cfg.BackdropBgFile,
                 tile = true,

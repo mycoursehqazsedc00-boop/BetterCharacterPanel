@@ -19,9 +19,13 @@ SlashCmdList["BCP"] = function(msg)
 end
 
 local BCP_InitFrame = CreateFrame("Frame")
+local bcpInitialized = false
 BCP_InitFrame:RegisterEvent("PLAYER_LOGIN")
-BCP_InitFrame:RegisterEvent("VARIABLES_LOADED")
 BCP_InitFrame:SetScript("OnEvent", function()
+    if bcpInitialized then
+        return
+    end
+    bcpInitialized = true
     BCP_InitFrame:UnregisterEvent("PLAYER_LOGIN")
 
     -- UI detection

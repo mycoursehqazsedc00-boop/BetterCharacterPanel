@@ -1,85 +1,53 @@
-# Better Character Panel (client-mods fork)
+# Better Character Panel (Client-Mods Fork)
 
-An addon for Turtle WoW (vanilla 1.12) that improves the default character and inspect panels: enchant descriptions next to gear icons, a missing-enchant marker, an improved layout that works with the default UI and pfUI, and optional Better Character Stats integration. Configure it with `/bcp` or the minimap button.
+Enhances the default Turtle WoW (1.12) character and inspect panels with permanent/temporary enchant labels, missing-enchant indicators, Gear Score, durability, cross-faction inspect summaries, gear export, and integrated **BetterCharacterStats** & **VanillaRatingBuster** support across both Vanilla and pfUI skins.
 
-This is a fork of [Arthur-Helias/BetterCharacterPanel](https://github.com/Arthur-Helias/BetterCharacterPanel) (base version **1.3.6**). It keeps everything the original does and adds optional features that use extra client mods.
+Fork of [Arthur-Helias/BetterCharacterPanel](https://github.com/Arthur-Helias/BetterCharacterPanel) (base version **1.3.6**).
 
-## Required and optional client mods
+## Required and Optional Client Mods
 
-| Client mod | Needed? | Used for |
+| Client Mod | Needed? | Used For |
 |---|---|---|
-| **Nampower** | **Required** (same as the original) | Reading equipped items and their enchant IDs (`GetEquippedItem`, `GetItemLevel`, `GetItemStatsField`) |
-| **ClassicAPI** | Optional | Enchant names from the client, weapon enchant timers, durability, repair cost |
-| **SuperWoW** | Optional | `/bcp export` (`ExportFile`) |
-| Better Character Stats | Optional, recommended (same as the original) | Extra stats inside the panel layout |
-| UnitXP SP3, VanillaHelpers, WeirdUtils | Not used | Nothing in them applies to a character panel |
+| **Nampower** | **Required** | Reading equipped items, enchant IDs, item levels, and item stats (`GetEquippedItems`, `GetEquippedItem`, `GetItemLevel`, `GetItemStatsField`, `GetUnitGUID`) |
+| **ClassicAPI** | Optional | Live enchant names, weapon enchant timers/charges, durability & repair cost, `C_Item.RequestLoadItemDataByID` / `ITEM_DATA_LOAD_RESULT` cache warmup, `GetAddOnMemoryUsage` in `/bcp perf` |
+| **SuperWoW** | Optional | `/bcp export` & `/bcp export target` (`ExportFile`), GUID resolution for cross-faction inspect snapshots |
 
-Every optional feature checks for the function it needs when it runs. If the mod is missing, that feature does nothing and the rest of the addon works as before. With Nampower alone, this fork behaves like the original plus the new scope enchant.
+Companion addons (optional, auto-detected):
+- **BetterCharacterStats:** Embedded stat cards inside the character panel (with category hide/collapse, class presets, and 1-tick sync via `BCS:RegisterCallback("GEAR_UPDATED")`).
+- **VanillaRatingBuster:** Displays total VRB spec scores in the Character/Inspect model hover tooltip, `/bcp inspect`, and `/bcp lastinspect`.
 
-## What changed from the original (1.3.6)
+## Features
 
-| | Original | This fork |
-|---|---|---|
-| Enchant not in BCP's database | Shows a generic "Enchanted" / "Temp Ench" | Shows the enchant's real name from the client's own data (ClassicAPI), shortened to 24 characters. Falls back to the generic text if ClassicAPI is missing |
-| Weapon oils, stones, poisons | Name only | Adds remaining time and charges, for example `(12m, 3x)`. Turns red under 2 minutes. Refreshes every second while the panel is open. Character panel only (ClassicAPI) |
-| Durability | Not shown | Percentage on damaged slots, coloured green to red. Character panel only (ClassicAPI) |
-| Gear score | Not shown | Total gear score in the model-hover tooltip, plus a per-item score line on every equipped item's own tooltip (character and inspect panels) — **and now also on items in your bags and bank**, not just equipped gear. Ported from S_ItemTip's `ItemSocre.lua` formula (a Turtle-tuned Shagu GearScore variant), so the numbers match what that addon already reports. Uses Nampower for item level and quality; no extra client mod required |
-| Gear summary | None | Hover the character model: average item level, gear score, plus average durability, lowest slot and estimated repair cost on your own panel. On the inspect panel it shows average item level and gear score only |
-| BetterCharacterStats cards cut off at the bottom | The scrollable BCS-card area's height was calculated as `yOffset - 45`, an unexplained fixed subtraction not present in the equivalent native stat display code. The scrollbar's max range is computed from that height, so with few categories enabled the shortfall could hide 2-3 of a category's 6 rows with no way to scroll to them | Removed the `-45`; the scroll area now reports its true height and every row is reachable |
-| Gear export | None | `/bcp export` and `/bcp export target` write a text file (SuperWoW) |
-| `/bcp` | Opens the config | Opens the config. `export` arguments are handled first |
-| Config window | Existing sections | New **Client Mod Extras** section with four checkboxes: durability, timers, gear tooltip, item score in tooltips |
-| Facetted Crystal Scope | Not in the database | Added as enchant ID **450**, "+2% Crit.", for Bow, Gun and Crossbow, in all seven languages |
-
-### Notes on the new features
-
-- **Repair cost** is the base, undiscounted cost. ClassicAPI only applies the reputation discount while a vendor window is open.
-- **Durability of other players** is not sent to your client, so it appears on your own character panel only.
-- **Export files** are written to SuperWoW's `imports` folder inside the game directory, named `BCP_<name>_<date>.txt`.
-- **New strings** (the config labels and tooltip text) are English only for now. Other languages fall back to English.
-
-### Facetted Crystal Scope
-
-Enchant ID 450 was read from the game with `GetEquippedItem("player",18).permanentEnchantId`. The in-game description of the scope's spell (36945) says it attaches a permanent scope to a bow or gun that increases crit chance by 2%. The description names bows and guns only; crossbow is included here because the enchant is on a crossbow in practice, and it only affects the missing-enchant check.
-
-The +2% appears as text on the ranged slot. It is **not** added into any crit number, because the addon does not calculate crit. Better Character Stats calculates crit itself by reading item tooltips, and this scope adds no tooltip line, so Better Character Stats does not count it.
-
-### Gear score
-
-The formula (`BetterCharacterPanel-gearscore.lua`) is ported as-is from S_ItemTip's `ItemSocre.lua`, itself a Turtle-tuned version of the classic Shagu GearScore addon — the same per-slot weights, the same class/weapon-type coefficients for main hand, off hand and ranged, and the same `(total / 17) * 1.355` normalization. Nothing about the scoring math was invented for this fork; only where the numbers come from changed:
-
-- **Item level and quality** come from Nampower's `GetItemStatsField`, which reads the item-stats data directly and isn't affected by the "item not cached yet" gap that stock `GetItemInfo` has. This makes item level and quality reliable even for an inspect target's gear you've never seen before.
-- **Two-handed weapon detection** (for the main-hand coefficient) still uses stock `GetItemInfo`, exactly as the original formula does. On an inspect target's weapon you've never seen, this can briefly assume one-handed until something else warms the client's item cache — a minor, self-correcting inaccuracy, not a missing feature. It self-corrects on your next panel refresh.
-- **Total score** shows in the model-hover gear tooltip, next to average item level.
-- **Per-item score** is added as an extra line on every equipped item's own tooltip (both panels), by pre-hooking `GameTooltip.SetInventoryItem` — the same technique `ItemSocre.lua` itself uses, kept as its own toggle since it's a busier addition than a single hover-tooltip line.
-- **Bag and bank items get a score too**, using the same toggle. Any item can be scored by its link alone (`GetItemLinkScore`, built on the same `GetItemInfo`-based quality/level reading and slot-coefficient math as equipped gear), not just something currently worn — so this also works for items you're merely considering, not only what's already on your character. Bags (and bank bag-slots) are covered by a new hook on `GameTooltip.SetBagItem`; the bank's own 24-slot main grid is covered by extending the existing `SetInventoryItem` hook to items outside the equipped-slot range, since this client shows bank-grid items through that same function. Items with no equip location at all (consumables, quest items, reagents) correctly get no score, same as equipped-slot scoring already did.
-
-## Installation
-
-1. Install **Nampower** first. Install ClassicAPI and SuperWoW as well if you want the optional features.
-2. Download this repository as a zip.
-3. Extract it and rename the folder to `BetterCharacterPanel` (remove any `-main` suffix).
-4. Put it in `Interface\AddOns\`. If you already have the original installed, replace it or move it out of the way, because two folders with the same addon name clash.
-5. Enable the addon on the character selection screen.
+- **Character & Inspect Enchant Overlays:** Permanent and temporary enchants beside each slot, missing-enchant markers, Facetted Crystal Scope (enchant `450`, `+2% Crit.` across all 7 locales), and ClassicAPI live enchant-name fallback.
+- **Weapon Temp Enchant Timers & Slot Durability (ClassicAPI):** Live remaining time/charges `(12m, 3x)` on weapon slots with idle `OnUpdate` detach, color-coded durability percentages on damaged gear, and repair cost estimate on model hover.
+- **Gear Score & Item Score Tooltips:** S_ItemTip/Shagu-compatible Gear Score in model tooltips and per-item `Item Score` lines across equipped slots, bags, bank, merchant, buyback, auction house, loot, quest, tradeskill, craft, mail, chat links (`ItemRefTooltip`), and comparison tooltips (`ShoppingTooltip1`/`2`).
+- **Integrated BetterCharacterStats Panel:** Per-category visibility checkboxes, `"Auto-hide by Class"` / `"Show All"` presets, collapsible cards (`-`/`+`) with zero-rescan layout rebuild, aligned Vanilla and pfUI skins (normal and WideMode).
+- **Cross-Faction Inspect & Snapshots:** Inspects other-faction players with GUID fallback, caches session inspect snapshots by GUID (`/bcp lastinspect`), and summarizes Avg iLvl, Gear Score, missing enchants, and VRB spec scores.
+- **Gear Readiness & Diagnostics:** `/bcp ready` pre-pull checklist (missing enchants, low durability, missing weapon oils/stones), `/bcp export [target]` text export, `/bcp trace`, and `/bcp perf`.
 
 ## Commands
 
-| Command | What it does |
+| Command | Description |
 |---|---|
-| `/bcp` or `/bettercharacterpanel` | Opens the config window |
-| `/bcp export` | Exports your equipped gear to a text file (needs SuperWoW) |
-| `/bcp export target` | Exports the targeted player's gear (needs SuperWoW) |
+| `/bcp` or `/bettercharacterpanel` | Opens the configuration window |
+| `/bcp export` | Exports your equipped gear, Avg iLvl, and Gear Score to a text file (SuperWoW) |
+| `/bcp export target` | Exports the targeted player's gear (SuperWoW) |
+| `/bcp inspect` | Prints cross-faction Avg iLvl, Gear Score, and VRB spec scores for your target |
+| `/bcp lastinspect` | Recalls the most recent inspected player's cached snapshot |
+| `/bcp ready` | Prints a pre-pull Gear Readiness checklist (missing enchants, durability, weapon temp enchants) |
+| `/bcp trace` | Toggles debug trace logging in chat |
+| `/bcp perf` | Prints detected client mods, companion addons, and addon memory usage |
 
-## Files added or changed
+## What Was Added & Improved vs Upstream (1.3.6)
 
-- **New:** `BetterCharacterPanel-clientmods.lua` (all optional client-mod features)
-- **Changed:** `BetterCharacterPanel.toc` (loads the new file), `BetterCharacterPanel.lua` (slash command), `BetterCharacterPanel-config.lua` (new defaults and config section), `BetterCharacterPanel-paperdoll.lua` (enchant name fallback, timers, durability, tooltip hooks), `BetterCharacterPanel-dbenchants.lua` (enchant 450)
-- **Changed:** all seven locale files (enchant 450 name and effect)
-
-## Status
-
-The new code was written against the ClassicAPI, SuperWoW and Nampower documentation, checked for Lua syntax, and tested against a mock of the game API. It has not been confirmed in a live client yet, so check the weapon enchant label (widened to fit the timer) on both the default UI and pfUI. Report problems as issues.
+| Area | Upstream (1.3.6) | This Fork |
+|---|---|---|
+| Client-mod extras | Nampower enchant lookup only | Added ClassicAPI enchant names, weapon timers, durability/repair cost, `ITEM_DATA_LOAD_RESULT` 18-slot cache warmup, and SuperWoW gear export |
+| Gear Score & Item Score | Not included | Full Gear Score + `Item Score` across all item tooltips including bags, bank, AH, merchant, loot, quest, mail, `ItemRefTooltip`, and `ShoppingTooltip1`/`2` (with correct off-hand slot coefficient) |
+| BCS Integration & Layout | Fixed list, scroll cutoff (`maxH + 75` / `-45`), redundant rescans | Per-category hide, card collapse, class presets, aligned Vanilla/pfUI frames, and 1-tick sync via `BCS:RegisterCallback("GEAR_UPDATED")` |
+| Cross-Faction Inspect & VRB Synergy | Basic inspect refresh | GUID-based inspect refresh + session snapshot cache (`/bcp lastinspect`), `PLAYER_TARGET_CHANGED` refresh, and VRB total spec scores on inspect/model hover |
+| Stability & Bug Fixes | `BCPPFUIUnifiedBackdrop` nil crash on first open, stacking `HookScript` in `EnableClickRotate`, nil `this.rotation`, `_G` nil global, double-init, stock 1.12 `GetItemInfo` index bugs, `ExportFile` `.txt.txt` / missing `pcall`, negative Head temp font height (`y="-7"`), ignored `SpecialIconsMissingEnchantOffsets`, unprefixed global button names | All fixed; batched Nampower `GetEquippedItems` calls and idle `OnUpdate` detach for minimal CPU overhead |
 
 ## Credits
 
-Original addon by Arthur-Helias (`X-URL` in the `.toc` still points to the upstream repository). Check the upstream repository for its license before redistributing.
+Original addon by Arthur-Helias. Gear Score formula ported from S_ItemTip (`ItemSocre.lua`, Turtle-tuned Shagu GearScore).

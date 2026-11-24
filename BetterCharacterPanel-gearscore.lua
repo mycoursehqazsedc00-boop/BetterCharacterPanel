@@ -94,17 +94,47 @@ end
 -- score ever showing at all. GetItemInfo carries the usual "not cached
 -- yet" caveat, but for your own already-equipped gear that's almost always
 -- a non-issue since the client has already seen it.
-function GS:GetSlotScore(unit, slotId)
-	local okItem, item = pcall(GetEquippedItem, unit, slotId)
+local pendingCacheItems = {}
 
-	if not okItem or not item or not item.itemId then
+if C_Item and C_Item.RequestLoadItemDataByID then
+	local gsCacheWatcher = CreateFrame("Frame")
+	gsCacheWatcher:RegisterEvent("ITEM_DATA_LOAD_RESULT")
+	gsCacheWatcher:SetScript("OnEvent", function()
+		local itemId = tonumber(arg1)
+		if not itemId or not pendingCacheItems[itemId] then
+			return
+		end
+		pendingCacheItems[itemId] = nil
+		if arg2 and BCP_Refresh then
+			if PaperDollFrame and PaperDollFrame:IsVisible() then
+				BCP_Refresh("player", "BCP_")
+			end
+			if InspectPaperDollFrame and InspectPaperDollFrame:IsVisible() then
+				local unit = (InspectFrame and InspectFrame.unit and InspectFrame.unit ~= "") and InspectFrame.unit or "target"
+				BCP_Refresh(unit, "BCP_Inspect_")
+			end
+		end
+	end)
+end
+
+function GS:GetSlotScoreFromItem(unit, slotId, item)
+	if not item or not item.itemId then
 		return nil
 	end
 
-	local itemLevel = BCPLib:GetItemLevelFromEquipmentSlot(unit, slotId)
-	local okInfo, _, _, quality, _, _, _, _, _, equipSlot = pcall(GetItemInfo, item.itemId)
+	local okLevel, itemLevel = pcall(GetItemLevel, item.itemId)
+	if not okLevel or not itemLevel then
+		return nil
+	end
 
-	if not itemLevel or not okInfo or quality == nil then
+	-- Stock 1.12 GetItemInfo returns: name(1), link(2), quality(3), minLevel(4), type(5), subType(6), stack(7), equipLoc(8), texture(9)
+	local okInfo, _, _, quality, _, _, _, _, equipSlot = pcall(GetItemInfo, item.itemId)
+
+	if not okInfo or quality == nil then
+		if C_Item and C_Item.RequestLoadItemDataByID and not pendingCacheItems[item.itemId] then
+			pendingCacheItems[item.itemId] = true
+			C_Item.RequestLoadItemDataByID(item.itemId)
+		end
 		return nil
 	end
 
@@ -118,6 +148,16 @@ function GS:GetSlotScore(unit, slotId)
 	end
 
 	return base * coef, itemLevel, quality
+end
+
+function GS:GetSlotScore(unit, slotId)
+	local okItem, item = pcall(GetEquippedItem, unit, slotId)
+
+	if not okItem or not item or not item.itemId then
+		return nil
+	end
+
+	return self:GetSlotScoreFromItem(unit, slotId, item)
 end
 
 -- Maps GetItemInfo's equipLoc enum to the slot numbering used above, so an
@@ -170,9 +210,31 @@ function GS:GetItemLinkScore(itemLink, unit)
 
 	unit = unit or "player"
 
-	local okInfo, _, _, quality, itemLevel, _, _, _, _, equipSlot = pcall(GetItemInfo, itemLink)
+	local quality, itemLevel, equipSlot
+	if C_Item and C_Item.GetItemInfo then
+		local okInfo, _, _, q, ilvl, _, _, _, _, loc = pcall(C_Item.GetItemInfo, itemLink)
+		if okInfo then
+			quality, itemLevel, equipSlot = q, ilvl, loc
+		end
+	else
+		local okInfo, _, _, q, _, _, _, _, loc = pcall(GetItemInfo, itemLink)
+		if okInfo then
+			quality, equipSlot = q, loc
+		end
+		local itemId = tonumber(itemLink)
+		if not itemId and type(itemLink) == "string" then
+			local _, _, idStr = string.find(itemLink, "item:(%d+)")
+			itemId = idStr and tonumber(idStr)
+		end
+		if itemId and GetItemLevel then
+			local okLvl, lvl = pcall(GetItemLevel, itemId)
+			if okLvl then
+				itemLevel = lvl
+			end
+		end
+	end
 
-	if not okInfo or quality == nil or not equipSlot or equipSlot == "" then
+	if quality == nil or not itemLevel or not equipSlot or equipSlot == "" then
 		return nil
 	end
 
@@ -197,9 +259,22 @@ end
 -- (e.g. no gear data available for that unit).
 function GS:GetTotalScore(unit)
 	local total, sawAny = 0, false
+	local items = nil
+
+	if GetEquippedItems then
+		local okItems, res = pcall(GetEquippedItems, unit)
+		if okItems and res then
+			items = res
+		end
+	end
 
 	for _, info in ipairs(BCP_SLOTS or {}) do
-		local score = self:GetSlotScore(unit, info.slotId)
+		local score
+		if items then
+			score = self:GetSlotScoreFromItem(unit, info.slotId, items[info.slotId])
+		else
+			score = self:GetSlotScore(unit, info.slotId)
+		end
 
 		if score then
 			total = total + score
@@ -218,27 +293,35 @@ end
 -- =   Per-item score line on each equipped item's tooltip  =
 -- ==========================================================
 
+local trackedSlotLookup
+
 local function IsBCPTrackedSlot(slotId)
-	for _, info in ipairs(BCP_SLOTS or {}) do
-		if info.slotId == slotId then
-			return true
+	if not trackedSlotLookup then
+		if not BCP_SLOTS then
+			return false
+		end
+
+		trackedSlotLookup = {}
+		for _, info in ipairs(BCP_SLOTS) do
+			trackedSlotLookup[info.slotId] = true
 		end
 	end
 
-	return false
+	return trackedSlotLookup[slotId] == true
 end
 
-local function ShowItemScoreLine(score)
+local function ShowItemScoreLine(score, tooltip)
 	if not score then
 		return
 	end
 
-	GameTooltip:AddLine(" ")
-	GameTooltip:AddDoubleLine(BCP_CM_ITEM_SCORE, string.format("%.1f", score), 1, 0.82, 0, 1, 1, 1)
-	GameTooltip:Show()
+	local tt = tooltip or GameTooltip
+	tt:AddLine(" ")
+	tt:AddDoubleLine(BCP_CM_ITEM_SCORE, string.format("%.1f", score), 1, 0.82, 0, 1, 1, 1)
+	tt:Show()
 end
 
-local function AddItemScoreLine(unit, slotId)
+local function AddItemScoreLine(unit, slotId, tooltip)
 	if not (BCPConfig and BCPConfig.ClientMods and BCPConfig.ClientMods.ItemScore) then
 		return
 	end
@@ -247,12 +330,12 @@ local function AddItemScoreLine(unit, slotId)
 		return
 	end
 
-	ShowItemScoreLine(GS:GetSlotScore(unit, slotId))
+	ShowItemScoreLine(GS:GetSlotScore(unit, slotId), tooltip)
 end
 
 -- For an item that isn't equipped -- a bag or bank item -- scored by link
 -- instead of by slot, via GetItemLinkScore.
-local function AddItemScoreLineForLink(itemLink)
+local function AddItemScoreLineForLink(itemLink, tooltip)
 	if not (BCPConfig and BCPConfig.ClientMods and BCPConfig.ClientMods.ItemScore) then
 		return
 	end
@@ -263,7 +346,7 @@ local function AddItemScoreLineForLink(itemLink)
 
 	local okScore, score = pcall(GS.GetItemLinkScore, GS, itemLink)
 
-	ShowItemScoreLine(okScore and score or nil)
+	ShowItemScoreLine(okScore and score or nil, tooltip)
 end
 
 -- SetInventoryItem covers both equipped gear (BCP_SLOTS, slot IDs 1-18)
@@ -276,17 +359,19 @@ end
 local previousSetInventoryItem = GameTooltip.SetInventoryItem
 
 GameTooltip.SetInventoryItem = function(self, unit, slotId)
-	local hasItem = previousSetInventoryItem(self, unit, slotId)
+	local r1, r2, r3 = previousSetInventoryItem(self, unit, slotId)
 
 	if IsBCPTrackedSlot(slotId) then
-		AddItemScoreLine(unit, slotId)
-	elseif hasItem then
+		if r1 then
+			AddItemScoreLine(unit, slotId, self)
+		end
+	elseif r1 then
 		local okLink, link = pcall(GetInventoryItemLink, unit, slotId)
 
-		AddItemScoreLineForLink(okLink and link or nil)
+		AddItemScoreLineForLink(okLink and link or nil, self)
 	end
 
-	return hasItem
+	return r1, r2, r3
 end
 
 -- Bag items (backpack, bags 0-4) and items inside purchased bank bag slots
@@ -302,8 +387,129 @@ if previousSetBagItem then
 
 		local okLink, link = pcall(GetContainerItemLink, bag, slot)
 
-		AddItemScoreLineForLink(okLink and link or nil)
+		AddItemScoreLineForLink(okLink and link or nil, self)
 
 		return r1, r2, r3
+	end
+end
+
+local function HookHyperlinkTooltip(tooltip)
+	if not tooltip or not tooltip.SetHyperlink then
+		return
+	end
+
+	local prev = tooltip.SetHyperlink
+	tooltip.SetHyperlink = function(self, link, a, b, c)
+		local r1, r2, r3 = prev(self, link, a, b, c)
+
+		if type(link) == "string" and string.find(link, "item:%d+") then
+			AddItemScoreLineForLink(link, self)
+		end
+
+		return r1, r2, r3
+	end
+end
+
+local function HookTooltipLinkMethod(tooltip, methodName, linkResolver)
+	if not tooltip or not tooltip[methodName] then
+		return
+	end
+
+	local prev = tooltip[methodName]
+	tooltip[methodName] = function(self, a1, a2, a3, a4)
+		local r1, r2, r3 = prev(self, a1, a2, a3, a4)
+		local link = linkResolver and linkResolver(a1, a2, a3, a4)
+
+		if not link and self.GetItem then
+			local okGet, _, ttLink = pcall(self.GetItem, self)
+			if okGet then
+				link = ttLink
+			end
+		end
+
+		if link then
+			AddItemScoreLineForLink(link, self)
+		end
+
+		return r1, r2, r3
+	end
+end
+
+local EXTRA_GAME_TOOLTIP_HOOKS = {
+	{ "SetMerchantItem", function(index) return GetMerchantItemLink and GetMerchantItemLink(index) end },
+	{ "SetBuybackItem", function(index) return GetBuybackItemLink and GetBuybackItemLink(index) end },
+	{ "SetAuctionItem", function(itemType, index) return GetAuctionItemLink and GetAuctionItemLink(itemType, index) end },
+	{ "SetAuctionSellItem", nil },
+	{ "SetLootItem", function(slot) return GetLootSlotLink and GetLootSlotLink(slot) end },
+	{ "SetLootRollItem", function(id) return GetLootRollItemLink and GetLootRollItemLink(id) end },
+	{ "SetQuestItem", function(qType, index) return GetQuestItemLink and GetQuestItemLink(qType, index) end },
+	{ "SetQuestLogItem", function(qType, index) return GetQuestLogItemLink and GetQuestLogItemLink(qType, index) end },
+	{ "SetTradeSkillItem", function(skill, id)
+		if id and GetTradeSkillReagentItemLink then
+			return GetTradeSkillReagentItemLink(skill, id)
+		elseif GetTradeSkillItemLink then
+			return GetTradeSkillItemLink(skill)
+		end
+		return nil
+	end },
+	{ "SetCraftItem", function(skill, id)
+		if id and GetCraftReagentItemLink then
+			return GetCraftReagentItemLink(skill, id)
+		elseif GetCraftItemLink then
+			return GetCraftItemLink(skill)
+		end
+		return nil
+	end },
+	{ "SetInboxItem", function(index, attachIndex)
+		if GetInboxItemLink then
+			local ok, link = pcall(GetInboxItemLink, index, attachIndex)
+			if ok then return link end
+		end
+		return nil
+	end },
+	{ "SetSendMailItem", nil },
+}
+
+for _, entry in ipairs(EXTRA_GAME_TOOLTIP_HOOKS) do
+	HookTooltipLinkMethod(GameTooltip, entry[1], entry[2])
+end
+
+HookHyperlinkTooltip(GameTooltip)
+HookHyperlinkTooltip(ItemRefTooltip)
+
+for _, compareName in ipairs({ "ShoppingTooltip1", "ShoppingTooltip2" }) do
+	local compareTooltip = getglobal(compareName)
+	if compareTooltip then
+		if compareTooltip.SetInventoryItem then
+			local prevInv = compareTooltip.SetInventoryItem
+			compareTooltip.SetInventoryItem = function(self, unit, slot)
+				local hasItem = prevInv(self, unit, slot)
+				if hasItem then
+					if IsBCPTrackedSlot(slot) then
+						AddItemScoreLine(unit, slot, self)
+					else
+						local okLink, link = pcall(GetInventoryItemLink, unit, slot)
+						AddItemScoreLineForLink(okLink and link or nil, self)
+					end
+				end
+				return hasItem
+			end
+		end
+		HookTooltipLinkMethod(compareTooltip, "SetBagItem", function(bag, slot)
+			return GetContainerItemLink and bag and slot and GetContainerItemLink(bag, slot) or nil
+		end)
+		if compareTooltip.SetHyperlinkCompareItem then
+			local prevCompare = compareTooltip.SetHyperlinkCompareItem
+			compareTooltip.SetHyperlinkCompareItem = function(self, a1, a2, a3, a4)
+				local r1, r2, r3 = prevCompare(self, a1, a2, a3, a4)
+				if self.GetItem then
+					local okGet, _, eqLink = pcall(self.GetItem, self)
+					if okGet and eqLink then
+						AddItemScoreLineForLink(eqLink, self)
+					end
+				end
+				return r1, r2, r3
+			end
+		end
 	end
 end

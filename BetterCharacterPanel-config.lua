@@ -23,6 +23,8 @@ local BCP_CONFIG_DEFAULTS = {
         FontScale = 1.0,
         WideMode = false,
         CategoryOrder = {},
+        HiddenCategories = {},
+        CollapsedCategories = {},
     },
     CharacterPanel = {
         EnchantFontScale = 1.0,
@@ -224,11 +226,32 @@ local function BCP_AddCategoryOrderList(parent, xIndent, yOffset)
                 row:SetHeight(rowHeight)
                 row:SetPoint("TOPLEFT", listFrame, "TOPLEFT", 0, -(i - 1) * rowHeight)
 
+                local cb = CreateFrame("CheckButton", "BCPOrderCheck" .. i, row, "UICheckButtonTemplate")
+                cb:SetWidth(18)
+                cb:SetHeight(18)
+                cb:SetPoint("LEFT", row, "LEFT", 0, 0)
+                cb:SetScript("OnClick", function()
+                    local catKey = this.categoryKey
+                    if not catKey then
+                        return
+                    end
+                    BCPConfig.StatPanel.HiddenCategories = BCPConfig.StatPanel.HiddenCategories or {}
+                    if this:GetChecked() == 1 then
+                        BCPConfig.StatPanel.HiddenCategories[catKey] = nil
+                    else
+                        BCPConfig.StatPanel.HiddenCategories[catKey] = true
+                    end
+                    if BCP_RebuildBCSLayout then
+                        BCP_RebuildBCSLayout()
+                    end
+                end)
+                row.cb = cb
+
                 local txt = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-                txt:SetPoint("LEFT", row, "LEFT", 0, 0)
+                txt:SetPoint("LEFT", cb, "RIGHT", 4, 0)
                 row.txt = txt
 
-                local upBtn = CreateFrame("Button", "UpButton" .. i, row)
+                local upBtn = CreateFrame("Button", "BCPOrderUpButton" .. i, row)
                 upBtn:SetWidth(24)
                 upBtn:SetHeight(24)
                 upBtn:SetPoint("RIGHT", row, "RIGHT", -24, 0)
@@ -238,7 +261,7 @@ local function BCP_AddCategoryOrderList(parent, xIndent, yOffset)
                 upBtn:SetHighlightTexture("Interface\\Buttons\\UI-Common-MouseHilight", "ADD")
                 row.upBtn = upBtn
 
-                local downBtn = CreateFrame("Button", "DownButton" .. i, row)
+                local downBtn = CreateFrame("Button", "BCPOrderDownButton" .. i, row)
                 downBtn:SetWidth(24)
                 downBtn:SetHeight(24)
                 downBtn:SetPoint("RIGHT", row, "RIGHT", 0, 0)
@@ -257,6 +280,9 @@ local function BCP_AddCategoryOrderList(parent, xIndent, yOffset)
                         BCPConfig.StatPanel.CategoryOrder[idx - 1] = BCPConfig.StatPanel.CategoryOrder[idx]
                         BCPConfig.StatPanel.CategoryOrder[idx] = temp
                         RefreshList()
+                        if BCP_RebuildBCSLayout then
+                            BCP_RebuildBCSLayout()
+                        end
                     end
                 end)
 
@@ -268,6 +294,9 @@ local function BCP_AddCategoryOrderList(parent, xIndent, yOffset)
                         BCPConfig.StatPanel.CategoryOrder[idx + 1] = BCPConfig.StatPanel.CategoryOrder[idx]
                         BCPConfig.StatPanel.CategoryOrder[idx] = temp
                         RefreshList()
+                        if BCP_RebuildBCSLayout then
+                            BCP_RebuildBCSLayout()
+                        end
                     end
                 end)
             end
@@ -277,7 +306,10 @@ local function BCP_AddCategoryOrderList(parent, xIndent, yOffset)
 
             local cat = curOrder[i]
             local name = (BCS and BCS.L and BCS.L[cat]) or cat
+            local isShown = not (BCPConfig.StatPanel.HiddenCategories and BCPConfig.StatPanel.HiddenCategories[cat])
 
+            rows[i].cb.categoryKey = cat
+            rows[i].cb:SetChecked(isShown)
             rows[i].txt:SetText(name)
 
             rows[i].upBtn:Enable()
@@ -297,11 +329,56 @@ local function BCP_AddCategoryOrderList(parent, xIndent, yOffset)
 
     RefreshList()
 
+    local classHiddenDefaults = {
+        WARRIOR = { PLAYERSTAT_RANGED_COMBAT = true, PLAYERSTAT_SPELL_COMBAT = true, PLAYERSTAT_SPELL_SCHOOLS = true },
+        ROGUE   = { PLAYERSTAT_RANGED_COMBAT = true, PLAYERSTAT_SPELL_COMBAT = true, PLAYERSTAT_SPELL_SCHOOLS = true },
+        HUNTER  = { PLAYERSTAT_SPELL_COMBAT = true, PLAYERSTAT_SPELL_SCHOOLS = true },
+        MAGE    = { PLAYERSTAT_MELEE_COMBAT = true, PLAYERSTAT_MELEE_BOSS = true, PLAYERSTAT_RANGED_COMBAT = true },
+        WARLOCK = { PLAYERSTAT_MELEE_COMBAT = true, PLAYERSTAT_MELEE_BOSS = true, PLAYERSTAT_RANGED_COMBAT = true },
+        PRIEST  = { PLAYERSTAT_MELEE_COMBAT = true, PLAYERSTAT_MELEE_BOSS = true, PLAYERSTAT_RANGED_COMBAT = true },
+        DRUID   = { PLAYERSTAT_RANGED_COMBAT = true },
+        PALADIN = { PLAYERSTAT_RANGED_COMBAT = true },
+        SHAMAN  = { PLAYERSTAT_RANGED_COMBAT = true },
+    }
+
+    local presetBtn = CreateFrame("Button", "BCPCategoryPresetBtn", listFrame, "UIPanelButtonTemplate")
+    presetBtn:SetWidth(128)
+    presetBtn:SetHeight(20)
+    presetBtn:SetPoint("TOPLEFT", listFrame, "BOTTOMLEFT", -8, -4)
+    presetBtn:SetText("Auto-hide by Class")
+    presetBtn:SetScript("OnClick", function()
+        local _, classFile = UnitClass("player")
+        local preset = classFile and classHiddenDefaults[classFile] or {}
+        BCPConfig.StatPanel.HiddenCategories = {}
+        for k, v in pairs(preset) do
+            if v then
+                BCPConfig.StatPanel.HiddenCategories[k] = true
+            end
+        end
+        RefreshList()
+        if BCP_RebuildBCSLayout then
+            BCP_RebuildBCSLayout()
+        end
+    end)
+
+    local showAllBtn = CreateFrame("Button", "BCPCategoryShowAllBtn", listFrame, "UIPanelButtonTemplate")
+    showAllBtn:SetWidth(72)
+    showAllBtn:SetHeight(20)
+    showAllBtn:SetPoint("LEFT", presetBtn, "RIGHT", 6, 0)
+    showAllBtn:SetText("Show All")
+    showAllBtn:SetScript("OnClick", function()
+        BCPConfig.StatPanel.HiddenCategories = {}
+        RefreshList()
+        if BCP_RebuildBCSLayout then
+            BCP_RebuildBCSLayout()
+        end
+    end)
+
     local notice = listFrame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-    notice:SetPoint("TOPLEFT", listFrame, "BOTTOMLEFT", -8, -6)
+    notice:SetPoint("TOPLEFT", presetBtn, "BOTTOMLEFT", 0, -6)
     notice:SetText("|cff888888" .. BCP_CONFIG_FONT_SCALE_RELOAD .. "|r")
 
-    return yOffset - (table.getn(order) * rowHeight) - 16
+    return yOffset - (table.getn(order) * rowHeight) - 42
 end
 
 local function BCP_AddSectionHeader(parent, text, yOffset)

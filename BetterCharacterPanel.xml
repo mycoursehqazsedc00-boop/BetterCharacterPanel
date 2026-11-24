@@ -22,7 +22,7 @@
                 <FontString name="BCP_Head_Temp"
                     inherits="GameFontHighlightSmall" justifyH="LEFT">
                     <Size>
-                        <AbsDimension x="128" y="-7" />
+                        <AbsDimension x="128" y="12" />
                     </Size>
                     <Anchors>
                         <Anchor point="LEFT" relativeTo="CharacterHeadSlot" relativePoint="RIGHT" />
@@ -496,7 +496,7 @@
                 <FontString name="BCP_Inspect_Head_Temp"
                     inherits="GameFontHighlightSmall" justifyH="LEFT">
                     <Size>
-                        <AbsDimension x="128" y="-7" />
+                        <AbsDimension x="128" y="12" />
                     </Size>
                     <Anchors>
                         <Anchor point="LEFT" relativeTo="InspectHeadSlot" relativePoint="RIGHT" />

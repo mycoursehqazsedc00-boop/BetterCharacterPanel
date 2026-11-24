@@ -45,6 +45,7 @@ BCP_CM_EXPORT_DONE = BCP_CM_EXPORT_DONE or "Gear exported to the SuperWoW import
 
 -- Equipment slots that can carry a weapon temporary enchant.
 local WEAPON_TEMP_SLOTS = { [16] = true, [17] = true, [18] = true }
+local WEAPON_SLOT_TAGS = { [16] = "MainHand", [17] = "SecondaryHand", [18] = "Ranged" }
 
 -- =================
 -- =   Utilities   =
@@ -138,7 +139,7 @@ end
 
 local weaponEnchantScratch = {}
 
-local function ReadWeaponEnchants()
+function M:ReadWeaponEnchants()
     if not (C_Item and C_Item.GetWeaponEnchantInfo) then
         return nil
     end
@@ -168,7 +169,7 @@ function M:GetTimerSuffix(slotId, data)
         return ""
     end
 
-    data = data or ReadWeaponEnchants()
+    data = data or self:ReadWeaponEnchants()
 
     local entry = data and data[slotId]
 
@@ -203,9 +204,53 @@ function M:GetTimerSuffix(slotId, data)
     return " |cffaaaaaa(|r" .. parts .. "|cffaaaaaa)|r"
 end
 
+local timerFrame = CreateFrame("Frame")
+local timerElapsed = 0
+
+local function TempTimerOnUpdate()
+    if not PaperDollFrame or not PaperDollFrame:IsVisible() or not M:IsEnabled("TempEnchantTimers") then
+        timerFrame:SetScript("OnUpdate", nil)
+        return
+    end
+
+    timerElapsed = timerElapsed + arg1
+
+    if timerElapsed < 1 then
+        return
+    end
+
+    timerElapsed = 0
+
+    local data = M:ReadWeaponEnchants()
+
+    if not data then
+        return
+    end
+
+    local hasAny = false
+    for slotId, tag in pairs(WEAPON_SLOT_TAGS) do
+        local fs = getglobal("BCP_" .. tag .. "_Temp")
+
+        if fs and fs.bcpBase then
+            local suffix = M:GetTimerSuffix(slotId, data)
+            if suffix ~= "" then
+                hasAny = true
+                fs:SetText(fs.bcpBase .. suffix)
+            else
+                fs.bcpBase = nil
+                fs:SetText("")
+            end
+        end
+    end
+
+    if not hasAny then
+        timerFrame:SetScript("OnUpdate", nil)
+    end
+end
+
 -- Called by BCP_Refresh for the player's temp text. Remembers the un-suffixed
 -- text so the one-second ticker below can refresh only the countdown.
-function M:DecorateTempText(fontString, baseText, slotId)
+function M:DecorateTempText(fontString, baseText, slotId, data)
     fontString.bcpBase = nil
 
     if baseText == "" or not WEAPON_TEMP_SLOTS[slotId] then
@@ -218,47 +263,13 @@ function M:DecorateTempText(fontString, baseText, slotId)
     fontString.bcpBase = baseText
     fontString.bcpSlotId = slotId
 
-    return baseText .. self:GetTimerSuffix(slotId)
+    if self:IsEnabled("TempEnchantTimers") and C_Item and C_Item.GetWeaponEnchantInfo then
+        timerElapsed = 0
+        timerFrame:SetScript("OnUpdate", TempTimerOnUpdate)
+    end
+
+    return baseText .. self:GetTimerSuffix(slotId, data)
 end
-
-local timerFrame = CreateFrame("Frame")
-local timerElapsed = 0
-
-timerFrame:SetScript("OnUpdate", function()
-    timerElapsed = timerElapsed + arg1
-
-    if timerElapsed < 1 then
-        return
-    end
-
-    timerElapsed = 0
-
-    if not PaperDollFrame or not PaperDollFrame:IsVisible() then
-        return
-    end
-
-    if not M:IsEnabled("TempEnchantTimers") then
-        return
-    end
-
-    local data = ReadWeaponEnchants()
-
-    if not data then
-        return
-    end
-
-    for slotId in pairs(WEAPON_TEMP_SLOTS) do
-        for _, info in ipairs(BCP_SLOTS or {}) do
-            if info.slotId == slotId then
-                local fs = getglobal("BCP_" .. info.tag .. "_Temp")
-
-                if fs and fs.bcpBase then
-                    fs:SetText(fs.bcpBase .. M:GetTimerSuffix(slotId, data))
-                end
-            end
-        end
-    end
-end)
 
 -- =================================================
 -- =   ClassicAPI: durability + repair cost       =
@@ -364,10 +375,29 @@ end
 
 function M:GetAverageItemLevel(unit)
     local total, count = 0, 0
+    local items = nil
+
+    if GetEquippedItems then
+        local okItems, res = pcall(GetEquippedItems, unit)
+        if okItems and res then
+            items = res
+        end
+    end
 
     for slot = 1, 18 do
         if slot ~= 4 then -- skip the shirt
-            local ilvl = BCPLib:GetItemLevelFromEquipmentSlot(unit, slot)
+            local ilvl
+            if items then
+                local itemInfo = items[slot]
+                if itemInfo and itemInfo.itemId then
+                    local okLvl, lvl = pcall(GetItemLevel, itemInfo.itemId)
+                    if okLvl then
+                        ilvl = lvl
+                    end
+                end
+            else
+                ilvl = BCPLib:GetItemLevelFromEquipmentSlot(unit, slot)
+            end
 
             if ilvl and ilvl > 0 then
                 total = total + ilvl
@@ -420,6 +450,35 @@ function M:ShowGearTooltip(frame, unit)
 
             if cost and cost > 0 then
                 GameTooltip:AddDoubleLine(BCP_CM_REPAIR_COST, FormatMoney(cost), 1, 1, 1, 1, 1, 1)
+            end
+        end
+
+        if self.LastPlayerMissingEnchants and self.LastPlayerMissingEnchants > 0 then
+            GameTooltip:AddDoubleLine("Missing Enchants",
+                "|cffff5555" .. tostring(self.LastPlayerMissingEnchants) .. "|r", 1, 1, 1, 1, 1, 1)
+        end
+
+        if VRB and type(VRB.GetUnitSpecScores) == "function" then
+            local okVrb, specScores = pcall(VRB.GetUnitSpecScores, VRB, "player")
+            if okVrb and specScores and table.getn(specScores) > 0 then
+                GameTooltip:AddLine(" ")
+                GameTooltip:AddLine("VanillaRatingBuster", 0.5, 0.85, 1)
+                for i = 1, table.getn(specScores) do
+                    local row = specScores[i]
+                    GameTooltip:AddDoubleLine(row.spec, string.format("%.1f", row.score), 1, 1, 1, 0.4, 1, 0.4)
+                end
+            end
+        end
+    else
+        if VRB and type(VRB.GetUnitSpecScores) == "function" then
+            local okVrb, specScores = pcall(VRB.GetUnitSpecScores, VRB, unit)
+            if okVrb and specScores and table.getn(specScores) > 0 then
+                GameTooltip:AddLine(" ")
+                GameTooltip:AddLine("VanillaRatingBuster", 0.5, 0.85, 1)
+                for i = 1, table.getn(specScores) do
+                    local row = specScores[i]
+                    GameTooltip:AddDoubleLine(row.spec, string.format("%.1f", row.score), 1, 1, 1, 0.4, 1, 0.4)
+                end
             end
         end
     end
@@ -485,12 +544,40 @@ function M:ExportGear(unit)
     local unitName = UnitName(unit) or "Unknown"
     local lines = { "# Better Character Panel gear export: " .. unitName }
 
-    for slot = 1, 19 do
-        local okItem, item = pcall(GetEquippedItem, unit, slot)
+    local okAvg, avgIlvl = pcall(self.GetAverageItemLevel, self, unit)
+    if okAvg and avgIlvl then
+        table.insert(lines, string.format("# Average Item Level: %.1f", avgIlvl))
+    end
 
-        if okItem and item and item.itemId then
+    if BCPGearScore then
+        local okScore, gs = pcall(BCPGearScore.GetTotalScore, BCPGearScore, unit)
+        if okScore and gs then
+            table.insert(lines, string.format("# Gear Score: %.1f", gs))
+        end
+    end
+
+    local items = nil
+    if GetEquippedItems then
+        local okItems, res = pcall(GetEquippedItems, unit)
+        if okItems and res then
+            items = res
+        end
+    end
+
+    for slot = 1, 19 do
+        local item
+        if items then
+            item = items[slot]
+        else
+            local okItem, res = pcall(GetEquippedItem, unit, slot)
+            if okItem then
+                item = res
+            end
+        end
+
+        if item and item.itemId then
             local okName, itemName = pcall(GetItemStatsField, item.itemId, "displayName")
-            local ilvl = BCPLib:GetItemLevelFromEquipmentSlot(unit, slot)
+            local okLvl, ilvl = pcall(GetItemLevel, item.itemId)
             local enchant = ""
 
             if item.permanentEnchantId and item.permanentEnchantId ~= 0 then
@@ -501,16 +588,244 @@ function M:ExportGear(unit)
             end
 
             table.insert(lines, string.format("slot=%d | id=%d | %s | ilvl=%s | %s",
-                slot, item.itemId, (okName and itemName) or "?", ilvl or "?", enchant))
+                slot, item.itemId, (okName and itemName) or "?", (okLvl and ilvl) or "?", enchant))
         end
     end
 
     local safeName = string.gsub(unitName, "[^%w]", "")
     local stamp = date and date("%Y%m%d_%H%M%S") or "gear"
-    local fileName = "BCP_" .. safeName .. "_" .. stamp .. ".txt"
+    local fileName = "BCP_" .. safeName .. "_" .. stamp
 
-    ExportFile(fileName, table.concat(lines, "\n"))
-    DEFAULT_CHAT_FRAME:AddMessage("|cff44ee44BCP:|r " .. BCP_CM_EXPORT_DONE .. " " .. fileName)
+    local okExport, err = pcall(ExportFile, fileName, table.concat(lines, "\n"))
+    if okExport then
+        DEFAULT_CHAT_FRAME:AddMessage("|cff44ee44BCP:|r " .. BCP_CM_EXPORT_DONE .. " " .. fileName .. ".txt")
+    else
+        DEFAULT_CHAT_FRAME:AddMessage("|cffff5555BCP:|r Export failed: " .. tostring(err))
+    end
+end
+
+-- ================================================
+-- =   Cross-Faction Inspect Snapshot, Readiness  =
+-- =   & Diagnostics (/bcp lastinspect/ready/...) =
+-- ================================================
+
+M.InspectSnapshots = M.InspectSnapshots or {}
+M.LastInspectKey = nil
+M.LastPlayerMissingEnchants = 0
+M.TraceEnabled = false
+
+function M:Trace(msg)
+    if not self.TraceEnabled then
+        return
+    end
+    DEFAULT_CHAT_FRAME:AddMessage("|cff88ccff[BCP trace]|r " .. tostring(msg))
+end
+
+local function ResolveUnitKey(unit)
+    if type(GetUnitGUID) == "function" then
+        local ok, guid = pcall(GetUnitGUID, unit)
+        if ok and guid and guid ~= "" then
+            return guid
+        end
+    end
+    if type(UnitGUID) == "function" then
+        local ok, guid = pcall(UnitGUID, unit)
+        if ok and guid and guid ~= "" then
+            return guid
+        end
+    end
+    if SUPERWOW_VERSION ~= nil then
+        local exists, guid = UnitExists(unit)
+        if exists and guid and guid ~= "" then
+            return guid
+        end
+    end
+    return UnitName(unit)
+end
+
+function M:CaptureInspectSnapshot(unit, missingCount, equippedItems)
+    if not unit or unit == "player" or not UnitExists(unit) or not UnitIsPlayer(unit) then
+        return
+    end
+
+    local key = ResolveUnitKey(unit)
+    if not key then
+        return
+    end
+
+    local name = UnitName(unit) or "Unknown"
+    local classLoc, classToken = UnitClass(unit)
+    local faction = UnitFactionGroup(unit) or "?"
+    local level = UnitLevel(unit) or 0
+    local okAvg, avgIlvl = pcall(self.GetAverageItemLevel, self, unit)
+    local okScore, gs = false, nil
+    if BCPGearScore then
+        okScore, gs = pcall(BCPGearScore.GetTotalScore, BCPGearScore, unit)
+    end
+
+    if not avgIlvl and not gs then
+        return
+    end
+
+    local snap = {
+        key = key,
+        name = name,
+        classLoc = classLoc or "?",
+        classToken = classToken,
+        faction = faction,
+        level = level,
+        avgIlvl = okAvg and avgIlvl or nil,
+        gearScore = okScore and gs or nil,
+        missingEnchants = missingCount or 0,
+        capturedAt = GetTime(),
+    }
+
+    if VRB and type(VRB.GetUnitSpecScores) == "function" then
+        local okVrb, scores = pcall(VRB.GetUnitSpecScores, VRB, unit)
+        if okVrb and scores and table.getn(scores) > 0 then
+            snap.vrbScores = scores
+        end
+    end
+
+    self.InspectSnapshots[key] = snap
+    self.LastInspectKey = key
+    self:Trace("Captured inspect snapshot for " .. name .. " (" .. tostring(faction) .. ")")
+end
+
+function M:PrintLastInspect()
+    local snap = self.LastInspectKey and self.InspectSnapshots[self.LastInspectKey]
+    if not snap then
+        DEFAULT_CHAT_FRAME:AddMessage("|cffff5555BCP:|r No inspect snapshot captured yet this session.")
+        return
+    end
+
+    local age = math.floor(GetTime() - (snap.capturedAt or GetTime()))
+    DEFAULT_CHAT_FRAME:AddMessage(string.format(
+        "|cff44ee44BCP Last Inspect [%s - Lv%d %s, %s]:|r Avg iLvl = %s | Gear Score = %s | Missing Enchants = %d (%ds ago)",
+        snap.name,
+        snap.level or 0,
+        snap.classLoc or "?",
+        snap.faction or "?",
+        snap.avgIlvl and string.format("%.1f", snap.avgIlvl) or "?",
+        snap.gearScore and string.format("%.1f", snap.gearScore) or "?",
+        snap.missingEnchants or 0,
+        age))
+
+    if snap.vrbScores and table.getn(snap.vrbScores) > 0 then
+        local parts = {}
+        for i = 1, table.getn(snap.vrbScores) do
+            table.insert(parts, string.format("%s=%.1f", snap.vrbScores[i].spec, snap.vrbScores[i].score))
+        end
+        DEFAULT_CHAT_FRAME:AddMessage("|cff88ccffBCP VRB Scores:|r " .. table.concat(parts, " | "))
+    end
+end
+
+function M:PrintReadinessChecklist()
+    local missingList = {}
+    if BCP_SLOTS then
+        for _, info in ipairs(BCP_SLOTS) do
+            local tex = getglobal("BCP_" .. info.tag .. "_MissingEnchant")
+            if tex and tex:IsVisible() then
+                table.insert(missingList, info.tag)
+            end
+        end
+    end
+
+    local avgPct, lowPct, lowLabel, cost = self:GetDurabilitySummary()
+    local weaponData = self:ReadWeaponEnchants()
+    local mhTemp = weaponData and weaponData[16] and weaponData[16].has
+    local ohLink = GetInventoryItemLink("player", 17)
+    local ohTemp = weaponData and weaponData[17] and weaponData[17].has
+
+    DEFAULT_CHAT_FRAME:AddMessage("|cff44ee44BCP Gear Readiness Checklist:|r")
+    if table.getn(missingList) > 0 then
+        DEFAULT_CHAT_FRAME:AddMessage("  |cffff5555Missing Enchants (" .. table.getn(missingList) .. "):|r " .. table.concat(missingList, ", "))
+    else
+        DEFAULT_CHAT_FRAME:AddMessage("  |cff44ee44Enchants:|r All checked slots enchanted.")
+    end
+
+    if avgPct then
+        local durLine = string.format("  Durability: Avg %s%.0f%%|r", DurabilityColor(avgPct), avgPct)
+        if lowPct and lowPct < 50 then
+            durLine = durLine .. string.format(" (Lowest: %s %s%.0f%%|r)", lowLabel or "?", DurabilityColor(lowPct), lowPct)
+        end
+        if cost and cost > 0 then
+            durLine = durLine .. " | Repair: " .. FormatMoney(cost)
+        end
+        DEFAULT_CHAT_FRAME:AddMessage(durLine)
+    end
+
+    if mhTemp then
+        DEFAULT_CHAT_FRAME:AddMessage("  |cff44ee44Main Hand Temp Enchant:|r Active" .. self:GetTimerSuffix(16, weaponData))
+    else
+        DEFAULT_CHAT_FRAME:AddMessage("  |cffffaa00Main Hand Temp Enchant:|r None (oil/stone missing)")
+    end
+
+    if ohLink then
+        if ohTemp then
+            DEFAULT_CHAT_FRAME:AddMessage("  |cff44ee44Off Hand Temp Enchant:|r Active" .. self:GetTimerSuffix(17, weaponData))
+        end
+    end
+end
+
+function M:PrintPerfStatus()
+    DEFAULT_CHAT_FRAME:AddMessage("|cff44ee44BCP Diagnostics & Integrations:|r")
+    DEFAULT_CHAT_FRAME:AddMessage(string.format("  Mods: ClassicAPI=%s | Nampower=%s | SuperWoW=%s | UnitXP=%s | VanillaHelpers=%s",
+        tostring(CLASSIC_API_VERSION ~= nil),
+        tostring(type(GetNampowerVersion) == "function"),
+        tostring(SUPERWOW_VERSION ~= nil),
+        tostring(pcall(UnitXP, "nop", "nop")),
+        tostring(type(UnitDisplayInfo) == "function")))
+    DEFAULT_CHAT_FRAME:AddMessage(string.format("  Companion Addons: BCS=%s | VanillaRatingBuster=%s | pfUI=%s",
+        tostring(BCS ~= nil),
+        tostring(VRB ~= nil),
+        tostring(pfUI ~= nil)))
+
+    if type(UpdateAddOnMemoryUsage) == "function" and type(GetAddOnMemoryUsage) == "function" then
+        pcall(UpdateAddOnMemoryUsage)
+        local memBCP = GetAddOnMemoryUsage("BetterCharacterPanel") or 0
+        local memBCS = GetAddOnMemoryUsage("BetterCharacterStats") or 0
+        local memVRB = GetAddOnMemoryUsage("VanillaRatingBuster") or 0
+        DEFAULT_CHAT_FRAME:AddMessage(string.format("  Memory: BCP=%.1f KB | BCS=%.1f KB | VRB=%.1f KB",
+            memBCP, memBCS, memVRB))
+    end
+end
+
+function M:InspectTargetSummary()
+    if not UnitExists("target") or not UnitIsPlayer("target") then
+        DEFAULT_CHAT_FRAME:AddMessage("|cffff5555BCP:|r Target a player first.")
+        return
+    end
+
+    local name = UnitName("target") or "Unknown"
+    local okAvg, avgIlvl = pcall(self.GetAverageItemLevel, self, "target")
+    local okScore, gs = false, nil
+    if BCPGearScore then
+        okScore, gs = pcall(BCPGearScore.GetTotalScore, BCPGearScore, "target")
+    end
+
+    if not avgIlvl and not gs then
+        DEFAULT_CHAT_FRAME:AddMessage("|cffff5555BCP:|r No inspect gear data available for " .. name .. " (move closer or target is not inspectable).")
+        return
+    end
+
+    self:CaptureInspectSnapshot("target", 0, nil)
+
+    DEFAULT_CHAT_FRAME:AddMessage(string.format("|cff44ee44BCP Inspect [%s]:|r Avg iLvl = %s | Gear Score = %s",
+        name,
+        (okAvg and avgIlvl) and string.format("%.1f", avgIlvl) or "?",
+        (okScore and gs) and string.format("%.1f", gs) or "?"))
+
+    if VRB and type(VRB.GetUnitSpecScores) == "function" then
+        local okVrb, scores = pcall(VRB.GetUnitSpecScores, VRB, "target")
+        if okVrb and scores and table.getn(scores) > 0 then
+            local parts = {}
+            for i = 1, table.getn(scores) do
+                table.insert(parts, string.format("%s=%.1f", scores[i].spec, scores[i].score))
+            end
+            DEFAULT_CHAT_FRAME:AddMessage("|cff88ccffBCP VRB Scores:|r " .. table.concat(parts, " | "))
+        end
+    end
 end
 
 -- Returns true when the message was handled here.
@@ -524,6 +839,32 @@ function M:HandleSlash(msg)
 
     if msg == "export target" then
         self:ExportGear("target")
+        return true
+    end
+
+    if msg == "inspect" then
+        self:InspectTargetSummary()
+        return true
+    end
+
+    if msg == "lastinspect" then
+        self:PrintLastInspect()
+        return true
+    end
+
+    if msg == "ready" then
+        self:PrintReadinessChecklist()
+        return true
+    end
+
+    if msg == "trace" then
+        self.TraceEnabled = not self.TraceEnabled
+        DEFAULT_CHAT_FRAME:AddMessage("|cff44ee44BCP:|r Trace " .. (self.TraceEnabled and "ON" or "OFF"))
+        return true
+    end
+
+    if msg == "perf" then
+        self:PrintPerfStatus()
         return true
     end
 

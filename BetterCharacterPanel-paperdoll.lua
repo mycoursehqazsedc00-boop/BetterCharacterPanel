@@ -1,3 +1,4 @@
+local _G = _G or getfenv(0)
 local BS = BCPDBEnchants.Slot
 
 BCP_SLOTS = {
@@ -62,11 +63,11 @@ local function BCP_Init(prefix, frameValues)
         local tex = getglobal(prefix .. info.tag .. "_MissingEnchant")
 
         if tex then
-            local sideKey = (side == "left") and "Left" or "Right"
-            local anchorCorner = (side == "left") and "TOPRIGHT" or "TOPLEFT"
-            local texFile = frameValues[sideKey .. "IconsMissingEnchantTexture"]
-            local texSize = frameValues[sideKey .. "IconsMissingEnchantSize"]
-            local texOffsets = frameValues[sideKey .. "IconsMissingEnchantOffsets"]
+            local sideKey = (side == "left" and "Left") or (side == "special" and "Special") or "Right"
+            local anchorCorner = (side == "left" or side == "special") and "TOPRIGHT" or "TOPLEFT"
+            local texFile = frameValues[sideKey .. "IconsMissingEnchantTexture"] or frameValues["RightIconsMissingEnchantTexture"]
+            local texSize = frameValues[sideKey .. "IconsMissingEnchantSize"] or frameValues["RightIconsMissingEnchantSize"]
+            local texOffsets = frameValues[sideKey .. "IconsMissingEnchantOffsets"] or frameValues["RightIconsMissingEnchantOffsets"]
 
             if texFile then
                 tex:SetTexture(texFile)
@@ -175,11 +176,14 @@ local function BCP_Init(prefix, frameValues)
     initialized[prefix] = true
 end
 
-local function GetEnchantTexts(unit, slotId, libSlot)
-    local itemInfo = GetEquippedItem(unit, slotId)
-
+local function GetEnchantTexts(unit, slotId, libSlot, preloadedItem)
+    local itemInfo = preloadedItem
     if not itemInfo then
-        return "", "", false
+        local okItem, res = pcall(GetEquippedItem, unit, slotId)
+        if not okItem or not res then
+            return "", "", false
+        end
+        itemInfo = res
     end
 
     local permText = ""
@@ -333,6 +337,9 @@ function BCP_RefreshBCSSections(skipBCSUpdate)
     end
 
     if not skipBCSUpdate then
+        BCS.needScanGear = true
+        BCS.needScanSkills = true
+        BCS.needUpdate = false
         BCS:UpdateStats()
     end
 
@@ -368,10 +375,31 @@ function BCP_RefreshBCSSections(skipBCSUpdate)
     BCP_BCSRefreshing = false
 end
 
-function BCP_BuildScrollContent(skin, contentFrame, scrollFrame, scrollBar, bcsCardPrefix, bcsCatPrefix, nativeCardPrefix)
+local bcpLastScrollLayout = nil
+
+function BCP_RebuildBCSLayout()
+    if not bcpLastScrollLayout then
+        return
+    end
+
+    local l = bcpLastScrollLayout
+    BCP_BuildScrollContent(l.skin, l.contentFrame, l.scrollFrame, l.scrollBar, l.bcsCardPrefix, l.bcsCatPrefix, l.nativeCardPrefix, true)
+end
+
+function BCP_BuildScrollContent(skin, contentFrame, scrollFrame, scrollBar, bcsCardPrefix, bcsCatPrefix, nativeCardPrefix, skipBCSUpdate)
     if not contentFrame then
         return
     end
+
+    bcpLastScrollLayout = {
+        skin = skin,
+        contentFrame = contentFrame,
+        scrollFrame = scrollFrame,
+        scrollBar = scrollBar,
+        bcsCardPrefix = bcsCardPrefix,
+        bcsCatPrefix = bcsCatPrefix,
+        nativeCardPrefix = nativeCardPrefix,
+    }
 
     local infoFrame = scrollFrame and scrollFrame:GetParent()
     local cfg = skin.Config
@@ -393,9 +421,7 @@ function BCP_BuildScrollContent(skin, contentFrame, scrollFrame, scrollBar, bcsC
     local contentW = baseInfoWidth - scrollPaddingX
     local maxH = (scrollFrame and scrollFrame:GetHeight()) or 400
 
-    if isWideMode then
-        maxH = maxH + 75
-    elseif BCP_IS_USING_BCS then
+    if not isWideMode and BCP_IS_USING_BCS then
         local scrollbarWidth = (BCP_IS_USING_PFUI and 20) or 25
 
         contentW = contentW - scrollbarWidth
@@ -413,55 +439,134 @@ function BCP_BuildScrollContent(skin, contentFrame, scrollFrame, scrollBar, bcsC
 
     if BCP_IS_USING_BCS then
         local categoryOrder = BCP_GetBCSCategoryOrder()
+        local hiddenCats = BCPConfig and BCPConfig.StatPanel and BCPConfig.StatPanel.HiddenCategories
+        local collapsedCats = BCPConfig and BCPConfig.StatPanel and BCPConfig.StatPanel.CollapsedCategories
         local currentX = BCP_CARD_MARGIN
         local currentY = 0
+        local visibleIdx = 0
 
-        for i, categoryKey in ipairs(categoryOrder) do
-            local rowStep = scaledStatH + rowSpacing
-            local cardH = titleTopPad + BCP_TITLE_H + (6 * rowStep) - rowSpacing + bottomPad
+        BCP_BCSSectionPrefixes = {}
 
-            if isWideMode and currentY + cardH > maxH and currentY > 0 then
-                currentX = currentX + cardWidth + columnSpacing
-                currentY = 0
-            end
+        local oldIdx = 1
+        while _G[bcsCardPrefix .. oldIdx] do
+            _G[bcsCardPrefix .. oldIdx]:Hide()
+            oldIdx = oldIdx + 1
+        end
 
-            local card = CreateFrame("Frame", bcsCardPrefix .. i, contentFrame)
-            card:SetWidth(cardWidth)
-            card:SetHeight(cardH)
-            card:SetPoint("TOPLEFT", contentFrame, "TOPLEFT", currentX, -currentY)
+        for _, categoryKey in ipairs(categoryOrder) do
+            if not (hiddenCats and hiddenCats[categoryKey]) then
+                visibleIdx = visibleIdx + 1
+                local isCollapsed = collapsedCats and collapsedCats[categoryKey] and true or false
+                local rowStep = scaledStatH + rowSpacing
+                local cardH
 
-            skin:ApplyCardBackdrop(card)
+                if isCollapsed then
+                    cardH = titleTopPad + BCP_TITLE_H + bottomPad
+                else
+                    cardH = titleTopPad + BCP_TITLE_H + (6 * rowStep) - rowSpacing + bottomPad
+                end
 
-            local titleFrame = CreateFrame("Frame", nil, card)
-            titleFrame:SetAllPoints(card)
-            titleFrame:SetFrameLevel(card:GetFrameLevel() + 2)
+                if isWideMode and currentY + cardH > maxH and currentY > 0 then
+                    currentX = currentX + cardWidth + columnSpacing
+                    currentY = 0
+                end
 
-            local title = titleFrame:CreateFontString(nil, "OVERLAY")
-            local fontPath, fontSize, fontFlags = skin:GetCardTitleFont()
-            title:SetFont(fontPath, math.floor(fontSize * fontScale), fontFlags)
-            title:SetPoint("TOP", card, "TOP", 0, -titleTopPad)
-            title:SetWidth(cardWidth - (BCP_CARD_PADDING * 2))
-            title:SetJustifyH("CENTER")
-            title:SetTextColor(1, 0.8, 0)
-            title:SetText(BCS.L[categoryKey] or categoryKey)
+                local cardName = bcsCardPrefix .. visibleIdx
+                local card = _G[cardName]
+                local isNewCard = false
 
-            local rowPrefix = bcsCatPrefix .. i .. "_"
-            BCP_BCSSectionPrefixes[i] = { prefix = rowPrefix, categoryKey = categoryKey }
+                if not card then
+                    isNewCard = true
+                    card = CreateFrame("Frame", cardName, contentFrame)
+                    skin:ApplyCardBackdrop(card)
 
-            local rowYStart = titleTopPad + BCP_TITLE_H
+                    local titleFrame = CreateFrame("Frame", nil, card)
+                    titleFrame:SetAllPoints(card)
+                    titleFrame:SetFrameLevel(card:GetFrameLevel() + 2)
 
-            for j = 1, 6 do
-                BCP_CreateBCSCompatStatFrame(skin, card, rowPrefix .. j, rowYStart + ((j - 1) * rowStep), cardWidth)
-            end
+                    local title = titleFrame:CreateFontString(nil, "OVERLAY")
+                    local fontPath, fontSize, fontFlags = skin:GetCardTitleFont()
+                    title:SetFont(fontPath, math.floor(fontSize * fontScale), fontFlags)
+                    title:SetPoint("TOP", card, "TOP", 0, -titleTopPad)
+                    title:SetWidth(cardWidth - (BCP_CARD_PADDING * 2) - 24)
+                    title:SetJustifyH("CENTER")
+                    title:SetTextColor(1, 0.8, 0)
+                    card.bcpTitle = title
 
-            currentY = currentY + cardH + 3
-            if not isWideMode then
-                yOffset = currentY
+                    local collapseBtn = CreateFrame("Button", nil, titleFrame)
+                    collapseBtn:SetWidth(14)
+                    collapseBtn:SetHeight(14)
+                    collapseBtn:SetPoint("TOPRIGHT", card, "TOPRIGHT", -BCP_CARD_PADDING - 2, -titleTopPad)
+                    collapseBtn:SetHighlightTexture("Interface\\Buttons\\UI-Common-MouseHilight", "ADD")
+                    local btnText = collapseBtn:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+                    btnText:SetAllPoints(collapseBtn)
+                    btnText:SetJustifyH("CENTER")
+                    btnText:SetTextColor(1, 0.82, 0)
+                    collapseBtn.bcpText = btnText
+                    collapseBtn:SetScript("OnEnter", function()
+                        if this.bcpText then
+                            this.bcpText:SetTextColor(1, 1, 1)
+                        end
+                    end)
+                    collapseBtn:SetScript("OnLeave", function()
+                        if this.bcpText then
+                            this.bcpText:SetTextColor(1, 0.82, 0)
+                        end
+                    end)
+                    collapseBtn:SetScript("OnClick", function()
+                        local key = this.categoryKey
+                        if not key or not BCPConfig or not BCPConfig.StatPanel then
+                            return
+                        end
+                        BCPConfig.StatPanel.CollapsedCategories = BCPConfig.StatPanel.CollapsedCategories or {}
+                        if BCPConfig.StatPanel.CollapsedCategories[key] then
+                            BCPConfig.StatPanel.CollapsedCategories[key] = nil
+                        else
+                            BCPConfig.StatPanel.CollapsedCategories[key] = true
+                        end
+                        BCP_RebuildBCSLayout()
+                    end)
+                    card.bcpCollapseBtn = collapseBtn
+                end
+
+                card:ClearAllPoints()
+                card:SetWidth(cardWidth)
+                card:SetHeight(cardH)
+                card:SetPoint("TOPLEFT", contentFrame, "TOPLEFT", currentX, -currentY)
+                card:Show()
+
+                card.bcpTitle:SetText(BCS.L[categoryKey] or categoryKey)
+                card.bcpCollapseBtn.categoryKey = categoryKey
+                card.bcpCollapseBtn.bcpText:SetText(isCollapsed and "+" or "-")
+
+                local rowPrefix = bcsCatPrefix .. visibleIdx .. "_"
+                local rowYStart = titleTopPad + BCP_TITLE_H
+
+                for j = 1, 6 do
+                    local statFrame = _G[rowPrefix .. j]
+                    if not statFrame then
+                        statFrame = BCP_CreateBCSCompatStatFrame(skin, card, rowPrefix .. j, rowYStart + ((j - 1) * rowStep), cardWidth)
+                    end
+                    if isCollapsed then
+                        statFrame:Hide()
+                    else
+                        statFrame:Show()
+                    end
+                end
+
+                if not isCollapsed then
+                    table.insert(BCP_BCSSectionPrefixes, { prefix = rowPrefix, categoryKey = categoryKey })
+                end
+
+                currentY = currentY + cardH + 3
+                if not isWideMode then
+                    yOffset = currentY
+                end
             end
         end
 
         if isWideMode then
-            local totalContentWidth = currentX + cardWidth + BCP_CARD_MARGIN
+            local totalContentWidth = (visibleIdx > 0) and (currentX + cardWidth + BCP_CARD_MARGIN) or contentW
             contentFrame:SetWidth(totalContentWidth)
 
             if infoFrame then
@@ -586,20 +691,25 @@ function BCP_BuildScrollContent(skin, contentFrame, scrollFrame, scrollBar, bcsC
     if scrollFrame and scrollBar then
         if isWideMode then
             scrollBar:SetMinMaxValues(0, 0)
+            scrollBar:SetValue(0)
             scrollBar:Hide()
         else
             local contentH = contentFrame:GetHeight()
             local frameH = scrollFrame:GetHeight()
+            local maxScroll = math.max(0, contentH - frameH)
 
-            scrollBar:SetMinMaxValues(0, math.max(0, contentH - frameH - 20))
+            scrollBar:SetMinMaxValues(0, maxScroll)
+            if scrollBar:GetValue() > maxScroll then
+                scrollBar:SetValue(maxScroll)
+            end
             scrollBar:Show()
         end
     end
 
-    BCP_RefreshBCSSections(false)
+    BCP_RefreshBCSSections(skipBCSUpdate == true)
 end
 
-local function BCP_Refresh(unit, prefix)
+function BCP_Refresh(unit, prefix)
     local skin = BCP_GetActiveSkin()
     BCP_Init(prefix, skin.FrameValues)
 
@@ -610,9 +720,23 @@ local function BCP_Refresh(unit, prefix)
         end
     end
 
+    local weaponEnchantData
+    if unit == "player" and BCPClientMods and BCPClientMods.ReadWeaponEnchants then
+        weaponEnchantData = BCPClientMods:ReadWeaponEnchants()
+    end
+
+    local equippedItems = nil
+    if GetEquippedItems then
+        local okItems, res = pcall(GetEquippedItems, unit)
+        if okItems and res then
+            equippedItems = res
+        end
+    end
+
+    local missingCount = 0
     for _, info in ipairs(BCP_SLOTS) do
         local tag = info.tag
-        local permText, tempText, isMissing = GetEnchantTexts(unit, info.slotId, info.libSlot)
+        local permText, tempText, isMissing = GetEnchantTexts(unit, info.slotId, info.libSlot, equippedItems and equippedItems[info.slotId] or nil)
 
         local permFS = getglobal(prefix .. tag .. "_Perm")
 
@@ -641,7 +765,7 @@ local function BCP_Refresh(unit, prefix)
         if tempFS then
             if unit == "player" and BCPClientMods then
                 -- Adds the remaining time / charges on weapon slots (ClassicAPI).
-                tempText = BCPClientMods:DecorateTempText(tempFS, tempText, info.slotId)
+                tempText = BCPClientMods:DecorateTempText(tempFS, tempText, info.slotId, weaponEnchantData)
             end
 
             tempFS:SetText(tempText)
@@ -653,6 +777,7 @@ local function BCP_Refresh(unit, prefix)
         if missingTex then
             if isMissing and BCPConfig.MissingEnchants.Show and (not BCPConfig.MissingEnchants.OnlyAtLevel60 or (unitLevel and unitLevel == 60)) then
                 missingTex:Show()
+                missingCount = missingCount + 1
             else
                 missingTex:Hide()
             end
@@ -660,8 +785,14 @@ local function BCP_Refresh(unit, prefix)
     end
 
     if BCPClientMods then
+        if unit == "player" then
+            BCPClientMods.LastPlayerMissingEnchants = missingCount
+        else
+            BCPClientMods:CaptureInspectSnapshot(unit, missingCount, equippedItems)
+        end
         BCPClientMods:RefreshSlotDurability(unit, prefix)
         BCPClientMods:HookModelTooltips()
+        BCPClientMods:Trace("BCP_Refresh unit=" .. tostring(unit) .. " prefix=" .. tostring(prefix) .. " missing=" .. tostring(missingCount))
     end
 end
 
@@ -739,39 +870,40 @@ function PaperDollFrame_OnShow()
 
     BCP_GetActiveSkin():OnPaperDollShow()
     BCP_Refresh("player", "BCP_")
+
+    if BCP_IS_USING_BCS and table.getn(BCP_BCSSectionPrefixes) > 0 then
+        BCP_RefreshBCSSections(false)
+    end
 end
 
 local _Orig_PaperDollFrame_OnEvent = PaperDollFrame_OnEvent
 
-function PaperDollFrame_OnEvent(event, arg1)
+function PaperDollFrame_OnEvent(event, a1)
     if _Orig_PaperDollFrame_OnEvent then
-        _Orig_PaperDollFrame_OnEvent(event, arg1)
+        _Orig_PaperDollFrame_OnEvent(event, a1)
     end
 
-    if PaperDollFrame:IsVisible() then
-        BCP_Refresh("player", "BCP_")
-    end
-
+    local unit = a1 or arg1
     if event == "UNIT_INVENTORY_CHANGED" then
-        if InspectFrame and InspectFrame.unit and arg1 == InspectFrame.unit then
-            if InspectPaperDollFrame:IsVisible() then
+        if unit == "player" and PaperDollFrame:IsVisible() then
+            BCP_Refresh("player", "BCP_")
+            BCP_RefreshBCSSections(false)
+        elseif InspectFrame and InspectFrame.unit and unit == InspectFrame.unit then
+            if InspectPaperDollFrame and InspectPaperDollFrame:IsVisible() then
                 BCP_Refresh(InspectFrame.unit, "BCP_Inspect_")
             end
-        end
-
-        if arg1 == "player" and PaperDollFrame:IsVisible() then
-            BCP_RefreshBCSSections(false)
         end
     end
 end
 
 local BCP_GUIDFallbackFrame = CreateFrame("Frame")
-local BCP_GUIDFallbackPending = false
+local BCP_GUIDFallbackPendingPlayer = false
+local BCP_GUIDFallbackPendingInspect = false
 local BCP_GUIDFallbackTimer = 0
 
-BCP_GUIDFallbackFrame:RegisterEvent("UNIT_INVENTORY_CHANGED")
-BCP_GUIDFallbackFrame:SetScript("OnUpdate", function()
-    if not BCP_GUIDFallbackPending then
+local function BCP_GUIDFallbackOnUpdate()
+    if not BCP_GUIDFallbackPendingPlayer and not BCP_GUIDFallbackPendingInspect then
+        BCP_GUIDFallbackFrame:SetScript("OnUpdate", nil)
         return
     end
 
@@ -781,47 +913,54 @@ BCP_GUIDFallbackFrame:SetScript("OnUpdate", function()
         return
     end
 
-    BCP_GUIDFallbackPending = false
+    local doPlayer = BCP_GUIDFallbackPendingPlayer
+    local doInspect = BCP_GUIDFallbackPendingInspect
+    BCP_GUIDFallbackPendingPlayer = false
+    BCP_GUIDFallbackPendingInspect = false
+    BCP_GUIDFallbackFrame:SetScript("OnUpdate", nil)
 
-    if not PaperDollFrame or not PaperDollFrame:IsVisible() then
-        return
+    if doPlayer and PaperDollFrame and PaperDollFrame:IsVisible() then
+        BCP_Refresh("player", "BCP_")
+
+        if BCP_IS_USING_BCS and BCS then
+            BCS.needScanGear = true
+            BCS.needScanSkills = true
+            BCS:UpdateStats()
+        end
     end
 
-    BCP_Refresh("player", "BCP_")
-
-    if BCP_IS_USING_BCS and BCS then
-        BCS.needScanGear = true
-        BCS.needScanSkills = true
-        BCS:UpdateStats()
+    if doInspect and InspectPaperDollFrame and InspectPaperDollFrame:IsVisible() then
+        local inspectUnit = (InspectFrame and InspectFrame.unit and InspectFrame.unit ~= "") and InspectFrame.unit or "target"
+        BCP_Refresh(inspectUnit, "BCP_Inspect_")
     end
-end)
+end
 
+BCP_GUIDFallbackFrame:RegisterEvent("UNIT_INVENTORY_CHANGED")
 BCP_GUIDFallbackFrame:SetScript("OnEvent", function()
-    if event ~= "UNIT_INVENTORY_CHANGED" then
+    if event ~= "UNIT_INVENTORY_CHANGED" or arg1 == nil then
         return
     end
 
-    if arg1 == "player" then
-        return
+    if arg1 ~= "player" then
+        local ok, isPlayer = pcall(UnitIsUnit, "player", arg1)
+        if ok and isPlayer then
+            BCP_GUIDFallbackPendingPlayer = true
+            BCP_GUIDFallbackTimer = 0.2
+            BCP_GUIDFallbackFrame:SetScript("OnUpdate", BCP_GUIDFallbackOnUpdate)
+        end
     end
 
-    if arg1 == nil then
-        return
+    if InspectPaperDollFrame and InspectPaperDollFrame:IsVisible() then
+        local inspectUnit = (InspectFrame and InspectFrame.unit and InspectFrame.unit ~= "") and InspectFrame.unit or "target"
+        if arg1 ~= inspectUnit then
+            local ok, isInspect = pcall(UnitIsUnit, inspectUnit, arg1)
+            if ok and isInspect then
+                BCP_GUIDFallbackPendingInspect = true
+                BCP_GUIDFallbackTimer = 0.2
+                BCP_GUIDFallbackFrame:SetScript("OnUpdate", BCP_GUIDFallbackOnUpdate)
+            end
+        end
     end
-
-    local isPlayer = false
-    local ok, result = pcall(UnitIsUnit, "player", arg1)
-
-    if ok and result then
-        isPlayer = true
-    end
-
-    if not isPlayer then
-        return
-    end
-
-    BCP_GUIDFallbackPending = true
-    BCP_GUIDFallbackTimer = 0.2
 end)
 
 -- ===========================
@@ -853,4 +992,29 @@ function InspectPaperDollFrame_OnShow()
 
     BCP_GetActiveSkin():OnInspectShow()
     BCP_Refresh(BCP_GetInspectUnit(), "BCP_Inspect_")
-end
+end
+
+local BCP_InspectTargetFrame = CreateFrame("Frame")
+BCP_InspectTargetFrame:RegisterEvent("PLAYER_TARGET_CHANGED")
+BCP_InspectTargetFrame:RegisterEvent("PLAYER_LOGIN")
+BCP_InspectTargetFrame:SetScript("OnEvent", function()
+    if event == "PLAYER_LOGIN" then
+        if BCS and type(BCS.RegisterCallback) == "function" then
+            BCS:RegisterCallback("GEAR_UPDATED", function()
+                if PaperDollFrame and PaperDollFrame:IsVisible() then
+                    BCP_Refresh("player", "BCP_")
+                    if BCP_IS_USING_BCS and BCP_RefreshBCSSections then
+                        BCP_RefreshBCSSections(true)
+                    end
+                end
+            end)
+        end
+        return
+    end
+    if InspectPaperDollFrame and InspectPaperDollFrame:IsVisible() then
+        local inspectUnit = BCP_GetInspectUnit()
+        if UnitExists(inspectUnit) and UnitIsPlayer(inspectUnit) then
+            BCP_Refresh(inspectUnit, "BCP_Inspect_")
+        end
+    end
+end)

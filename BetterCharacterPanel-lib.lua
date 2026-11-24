@@ -94,9 +94,9 @@ function BCPLib:IsEquippedItemMissingPermanentEnchant(unit, slot)
         return false
     end
 
-    local itemInfo = GetEquippedItem(unit, slot)
+    local okItem, itemInfo = pcall(GetEquippedItem, unit, slot)
 
-    if not itemInfo then
+    if not okItem or not itemInfo then
         return false
     end
 
@@ -194,9 +194,9 @@ function BCPLib:GetItemLevelFromEquipmentSlot(unit, slot)
 end
 
 function BCPLib:GetColorFromEquipmentSlot(unit, slot)
-    local itemInfo = GetEquippedItem(unit, slot)
+    local okItem, itemInfo = pcall(GetEquippedItem, unit, slot)
 
-    if not itemInfo then
+    if not okItem or not itemInfo then
         return nil
     end
 
@@ -223,19 +223,25 @@ end
 
 -- Taken from pfUI by Shagu
 function BCPLib:EnableClickRotate(frame)
+    if not frame or frame.bcpClickRotate then
+        return
+    end
+    frame.bcpClickRotate = true
     frame:EnableMouse(true)
 
     HookScript(frame, "OnUpdate", function()
         if this.rotate then
-            local x, _ = GetCursorPosition()
+            local x, y = GetCursorPosition()
+            local rot = this.rotation or 0
 
             if this.curx > x then
-                this.rotation = this.rotation - abs(x - this.curx) * 0.025
+                rot = rot - abs(x - this.curx) * 0.025
             elseif this.curx < x then
-                this.rotation = this.rotation + abs(x - this.curx) * 0.025
+                rot = rot + abs(x - this.curx) * 0.025
             end
 
-            this:SetRotation(this.rotation)
+            this.rotation = rot
+            this:SetRotation(rot)
             this.curx, this.cury = x, y
         end
     end)
